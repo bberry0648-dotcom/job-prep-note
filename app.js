@@ -117,12 +117,14 @@ const expName = e => e ? (e.org || '제목 없는 경험') + (e.position ? ` · 
 
 // ───────── 서버·AI ─────────
 let AI = { ok: false, server: false, model: '' };
+const FETCH_API = 'https://job-prep-fetch.vercel.app/api/fetch'; // 공고·자료 URL 가져오기 (fetch-api/)
 async function api(path, body) {
-  if (HOSTED) return { ok: false, reason: path === '/api/fetch' ? '배포된 사이트에서는 다른 웹사이트 주소를 직접 읽을 수 없습니다(보안상 막혀 있음).' : '배포된 사이트에는 서버 기능이 없습니다.' };
+  const url = path === '/api/fetch' ? FETCH_API : path;
+  if (HOSTED && url === path) return { ok: false, reason: '배포된 사이트에는 서버 기능이 없습니다.' };
   try {
-    const r = await fetch(path, { method: body ? 'POST' : 'GET', headers: { 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+    const r = await fetch(url, { method: body ? 'POST' : 'GET', headers: { 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
     return await r.json().catch(() => ({ ok: false, reason: `서버 응답을 읽지 못했습니다 (HTTP ${r.status})` }));
-  } catch { return { ok: false, reason: '로컬 서버에 연결되지 않았습니다. 터미널에서 python3 server.py 로 실행한 주소(http://127.0.0.1:8790)로 열었는지 확인하세요.' }; }
+  } catch { if (url === FETCH_API) return { ok: false, reason: '공고 가져오기 서버에 연결하지 못했습니다. 인터넷 연결을 확인하고 다시 눌러주세요.' }; return { ok: false, reason: '로컬 서버에 연결되지 않았습니다. 터미널에서 python3 server.py 로 실행한 주소(http://127.0.0.1:8790)로 열었는지 확인하세요.' }; }
 }
 async function checkAI() {
   if (HOSTED) {
@@ -842,9 +844,10 @@ V.job = r => {
 const JT = {};
 JT.info = j => {
   const fm = UI.fetchMsg[j.id];
-  return `<div class="card"><div class="grid2"><div class="fld"><span>회사명</span>${inp(`job:${j.id}:company`, j.company)}</div><div class="fld"><span>직무명</span>${inp(`job:${j.id}:position`, j.position)}</div></div>
-<div class="grid2"><div class="fld"><span>채용공고 URL</span>${inp(`job:${j.id}:url`, j.url, 'https://', 'url')}</div><div class="fld"><span>마감일</span>${inp(`job:${j.id}:deadline`, j.deadline, '', 'date')}</div></div>
-<div class="row">${btn('fetchPosting', UI.busy['fetch:' + j.id] ? '가져오는 중…' : 'URL에서 공고 본문 가져오기', { id: j.id }, '', !!UI.busy['fetch:' + j.id])}</div>
+  const busy = !!UI.busy['fetch:' + j.id];
+  return `<div class="card"><div class="fld"><span>채용공고 URL — 붙여넣으면 회사명·직무·마감일·공고 본문을 채웁니다</span>
+<div class="url-row">${inp(`job:${j.id}:url`, j.url, '원티드·사람인·잡코리아 등 공고 주소', 'url')}${btn('fetchPosting', busy ? '불러오는 중…' : '불러오기', { id: j.id }, 'primary', busy)}</div></div>
+<div class="grid3"><div class="fld"><span>회사명</span>${inp(`job:${j.id}:company`, j.company)}</div><div class="fld"><span>직무명</span>${inp(`job:${j.id}:position`, j.position)}</div><div class="fld"><span>마감일</span>${inp(`job:${j.id}:deadline`, j.deadline, '', 'date')}</div></div>
 ${fm ? `<p class="msg ${fm.type}">${esc(fm.text)}</p>` : j.fetch ? `<p class="msg ${j.fetch.ok ? 'info' : 'err'}">마지막 URL 가져오기(${fmt(j.fetch.at)}): ${j.fetch.ok ? `성공, ${j.fetch.chars}자` : `실패 — ${esc(j.fetch.reason)}`}${j.fetch.ok ? '' : '\n아래 공고 본문은 URL에서 읽은 것이 아닙니다.'}</p>` : ''}
 ${j.fetchPreview ? `<div class="note warn">가져온 본문(${j.fetchPreview.length}자)이 기존 본문과 다릅니다. ${btn('usePreview', '가져온 본문으로 교체', { id: j.id })} ${btn('dropPreview', '기존 본문 유지', { id: j.id }, 'quiet')}<details><summary>가져온 본문 미리보기</summary><div class="pre quote">${esc(j.fetchPreview.slice(0, 3000))}</div></details></div>` : ''}
 <div class="fld"><span>공고 본문</span>${ta(`job:${j.id}:postingText`, j.postingText, 14, 'URL을 가져오지 못하면 공고 페이지의 본문을 복사해 여기에 붙여넣으세요.')}</div>
@@ -1190,15 +1193,25 @@ const A = {
   reopenFb({ id, i }) { exp(id).feedback.find(y => y.id === i).status = 'open'; save(); },
   resetBase({ id }) { const e = exp(id); e.fbBase = snap(e); save(); },
 
-  newJob() { const j = newJobObj(); S.jobs.unshift(j); save(); go(`#/job/${j.id}/info`); return 'noRender'; },
+  newJob() { const j = newJobObj(); S.jobs.unshift(j); save(); go(`#/job/${j.id}/info`); setTimeout(() => document.querySelector(`[data-b="job:${j.id}:url"]`)?.focus(), 50); return 'noRender'; },
   delJob({ id }) { S.jobs = S.jobs.filter(j => j.id !== id); S.docs = S.docs.filter(d => d.jobId !== id); UI.confirm = null; save(); go('#/jobs'); return 'noRender'; },
   async fetchPosting({ id }) {
-    const j = job(id); if (!j.url?.trim()) { UI.fetchMsg[id] = { type: 'err', text: 'URL을 먼저 입력하세요.' }; return; }
+    const j = job(id); if (UI.busy['fetch:' + id]) return; // 칸을 벗어날 때 자동 불러오기와 버튼이 겹치지 않게
+    if (!j.url?.trim()) { UI.fetchMsg[id] = { type: 'err', text: 'URL을 먼저 입력하세요.' }; return; }
     UI.busy['fetch:' + id] = true; render(); const r = await api('/api/fetch', { url: j.url.trim() }); UI.busy['fetch:' + id] = false;
     if (!r.ok) { j.fetch = { ok: false, reason: r.reason, at: nowIso() }; UI.fetchMsg[id] = { type: 'err', text: `공고를 가져오지 못했습니다: ${r.reason}\n→ 공고 페이지에서 본문을 복사해 아래 '공고 본문'에 붙여넣어 주세요. 가져오지 못한 공고는 분석된 것으로 표시하지 않습니다.` }; }
-    else { j.fetch = { ok: true, at: r.checkedAt, chars: r.chars, title: r.title };
-      if (!j.postingText.trim()) { Object.assign(j, { postingText: r.text, postingSource: `URL에서 가져옴 (${j.url})`, postingAt: r.checkedAt }); UI.fetchMsg[id] = { type: 'ok', text: `가져왔습니다(${r.chars}자, 페이지 제목: ${r.title || '없음'}). 메뉴·광고 같은 불필요한 줄이 섞였을 수 있으니 확인하고 지우세요.` }; }
-      else { j.fetchPreview = r.text; j.fetchAt = r.checkedAt; UI.fetchMsg[id] = { type: 'info', text: '가져왔습니다. 이미 본문이 있어 바로 바꾸지 않았습니다.' }; } }
+    else { j.fetch = { ok: true, at: r.checkedAt, chars: r.chars, title: r.title, imageOnly: !!r.imageOnly };
+      const filled = [['company', '회사명'], ['position', '직무명'], ['deadline', '마감일']].filter(([k]) => r.job?.[k] && !j[k]?.trim() && (j[k] = r.job[k])).map(([, l]) => l);
+      const img = r.imageOnly ? `\n공고 본문이 이미지로만 되어 있어 글자로 가져오지 못했습니다. 페이지 요약만 넣었으니, 공고 이미지를 보고 주요 업무·자격요건을 본문에 붙여넣어 주세요.${r.images?.length ? '\n공고 이미지: ' + r.images.join(' , ') : ''}` : '';
+      const head = filled.length ? `${filled.join('·')}을(를) 채웠습니다. ` : r.job?.company ? '' : '회사명·직무는 이 페이지에서 찾지 못했습니다 — 직접 적어주세요. ';
+      if (!j.postingText.trim()) {
+        Object.assign(j, { postingText: r.text, postingSource: `URL에서 가져옴 (${j.url})`, postingAt: r.checkedAt });
+        const { cats, unclassified } = extractPosting(j.postingText); const n = ['duties', 'required', 'preferred'].reduce((a, c) => a + cats[c].length, 0);
+        // 여러 직무가 한 페이지에 섞인 공고는 규칙으로 나누면 수백 줄이 요건이 된다 → 자동 분리는 적당할 때만
+        const sane = n > 0 && n <= 60;
+        if (sane) j.analysis = { at: nowIso(), source: '규칙 기반 추출', posting: j.postingText, postingSource: j.postingSource, url: j.url, cats, interpreted: [], unclassified };
+        UI.fetchMsg[id] = { type: r.imageOnly || !sane ? 'info' : 'ok', text: `${head}공고 본문 ${r.chars}자를 가져왔습니다. ${sane ? `요구사항 ${n}개로 나눴습니다 — 요구사항 탭에서 확인하세요.` : n ? '여러 직무가 섞였거나 길어서 요구사항을 자동으로 나누지 않았습니다. 지원할 직무 부분만 남기고 요구사항 탭에서 나누세요.' : '요구사항 제목(주요업무·자격요건 등)을 찾지 못했습니다. 요구사항 탭에서 AI 분석을 쓰거나 직접 옮기세요.'} 메뉴·광고 같은 줄이 섞였을 수 있으니 확인하세요.${img}` };
+      } else { j.fetchPreview = r.text; j.fetchAt = r.checkedAt; UI.fetchMsg[id] = { type: 'info', text: `${head}이미 본문이 있어 바로 바꾸지 않았습니다.${img}` }; } }
     save();
   },
   usePreview({ id }) { const j = job(id); Object.assign(j, { postingText: j.fetchPreview, postingSource: `URL에서 가져옴 (${j.url})`, postingAt: j.fetchAt || nowIso(), fetchPreview: null }); save(); },
@@ -1402,6 +1415,7 @@ document.addEventListener('change', e => {
   if (el.id === 'resume-file') return readResumeFile(el.files[0]);
   if (el.id === 'imp-type') { UI.impType = el.value; if (UI.impPreview) { UI.impPreview.type = el.value; render(); } return; }
   if (el.dataset.a2) return A2[el.dataset.a2](el);
+  const u = el.dataset.b?.match(/^job:([^:]+):url$/); if (u && /^https?:\/\/\S+\.\S+/.test(el.value.trim()) && !job(u[1])?.postingText.trim()) return A.fetchPosting({ id: u[1] }).then(() => render());
   if (el.dataset.b !== undefined && (el.tagName === 'SELECT' || el.type === 'checkbox' || el.type === 'date')) bind(el);
   if (el.dataset.rr !== undefined) render();
 });

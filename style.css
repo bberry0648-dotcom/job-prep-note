@@ -92,6 +92,8 @@ select { width: auto; max-width: 100%; }
 .chk { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; color: var(--muted); margin-top: 4px; cursor: pointer; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
 .grid3 { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 0 14px; }
+.url-row { display: flex; gap: 8px; align-items: center; }
+.url-row input { flex: 1; min-width: 0; }
 
 .page-head { margin-bottom: 8px; }
 .back { font-size: 14px; }
