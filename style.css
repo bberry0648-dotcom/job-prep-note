@@ -211,6 +211,21 @@ table.t th { font-size: 13px; color: var(--muted); font-weight: 600; }
 .chk.pick { display: flex; font-size: 15px; color: var(--fg); padding: 6px 0; }
 .ai-wrap { margin-top: 12px; }
 
+/* 경험 이야기 흐름 */
+.flow { display: flex; gap: 6px; list-style: none; padding: 0; margin: 6px 0 4px; counter-reset: f; flex-wrap: wrap; }
+.flow li { counter-increment: f; font-size: 14px; }
+.flow li a { display: inline-block; padding: 4px 12px; border-radius: 980px; background: var(--seg-bg); color: var(--sec); }
+.flow li a::before { content: counter(f) " "; font-weight: 600; }
+.flow li.on a { background: var(--action); color: var(--on-action); }
+.flow li.done a { background: var(--ok-bg); color: var(--ok); }
+#s1, #s2, #s3 { background: var(--surface); border-radius: 14px; padding: 4px 18px 12px; margin: 0 0 12px; scroll-margin-top: 70px; }
+.split .pane #s1, .split .pane #s2, .split .pane #s3 { padding: 0; }
+.sum { font-size: 14px; margin: 6px 0; } .sum .lbl { display: inline; margin-right: 6px; }
+.bul { padding: 8px 0; border-bottom: 1px solid var(--hairline); } .bul.off { opacity: .5; }
+.bul textarea { margin-top: 4px; field-sizing: content; min-height: 0; }
+pre.code { background: var(--bg); padding: 10px 12px; border-radius: 10px; font-size: 13px; overflow-x: auto; }
+a.aist { color: inherit; } a.aist:hover { text-decoration: underline; }
+
 /* 인쇄용 화면 */
 .print-doc { background: var(--surface); max-width: 800px; margin: 0 auto; padding: 48px 56px; border-radius: 4px; font-size: 15px; line-height: 1.7; }
 .print-doc h1 { font-size: 26px; margin: 0 0 20px; }

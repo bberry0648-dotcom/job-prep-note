@@ -113,29 +113,33 @@ const doc = id => S.docs.find(x => x.id === id);
 const val = (e, k) => (HEAD.some(h => h[0] === k) ? e[k] : e.f?.[k]) || '';
 const bpath = (e, k) => HEAD.some(h => h[0] === k) ? `exp:${e.id}:${k}` : `exp:${e.id}:f.${k}`;
 const snap = e => clone({ org: e.org, period: e.period, position: e.position, f: e.f, unknown: e.unknown });
-const expName = e => e ? (e.org || '제목 없는 경험') + (e.position ? ` · ${e.position}` : '') : '(삭제된 경험)';
+const expName = e => e ? (e.org || (e.raw?.trim() ? e.raw.trim().slice(0, 24) + '…' : '새 경험')) + (e.position ? ` · ${e.position}` : '') : '(삭제된 경험)';
 
 // ───────── 서버·AI ─────────
 let AI = { ok: false, server: false, model: '' };
 const FETCH_API = 'https://job-prep-fetch.vercel.app/api/fetch'; // 공고·자료 URL 가져오기 (fetch-api/)
+const AI_API = 'https://job-prep-fetch.vercel.app/api/ai'; // 웹사이트용 AI 중계. API 키는 Vercel 환경변수에만 있다
+const aiCode = { get() { try { return localStorage.getItem(KEY + '.aicode') || ''; } catch { return ''; } }, set(v) { try { v ? localStorage.setItem(KEY + '.aicode', v) : localStorage.removeItem(KEY + '.aicode'); } catch { } } };
 async function api(path, body) {
-  const url = path === '/api/fetch' ? FETCH_API : path;
+  const web = HOSTED && !CLAUDE && (path === '/api/ai' || path === '/api/status');
+  const url = path === '/api/fetch' ? FETCH_API : web ? AI_API : path;
   if (HOSTED && url === path) return { ok: false, reason: '배포된 사이트에는 서버 기능이 없습니다.' };
   try {
-    const r = await fetch(url, { method: body ? 'POST' : 'GET', headers: { 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+    const r = await fetch(url, { method: body ? 'POST' : 'GET', headers: { 'content-type': 'application/json', ...(web ? { 'x-access-code': aiCode.get() } : {}) }, body: body ? JSON.stringify(body) : undefined });
     return await r.json().catch(() => ({ ok: false, reason: `서버 응답을 읽지 못했습니다 (HTTP ${r.status})` }));
-  } catch { if (url === FETCH_API) return { ok: false, reason: '공고 가져오기 서버에 연결하지 못했습니다. 인터넷 연결을 확인하고 다시 눌러주세요.' }; return { ok: false, reason: '로컬 서버에 연결되지 않았습니다. 터미널에서 python3 server.py 로 실행한 주소(http://127.0.0.1:8790)로 열었는지 확인하세요.' }; }
+  } catch { if (web) return { ok: false, reason: 'AI 서버에 연결하지 못했습니다. 인터넷 연결을 확인하세요.' }; if (url === FETCH_API) return { ok: false, reason: '공고 가져오기 서버에 연결하지 못했습니다. 인터넷 연결을 확인하고 다시 눌러주세요.' }; return { ok: false, reason: '로컬 서버에 연결되지 않았습니다. 터미널에서 python3 server.py 로 실행한 주소(http://127.0.0.1:8790)로 열었는지 확인하세요.' }; }
 }
 async function checkAI() {
-  if (HOSTED) {
+  if (CLAUDE) {
     const sample = await cap('sample');
     AI = { ok: !!sample, server: false, model: '내 Claude 계정', sample };
-  } else { const r = await api('/api/status'); AI = { ok: !!r.ai, server: !!r.ok, model: r.model || '' }; }
+  } else if (HOSTED) { const r = await api('/api/status'); AI = { ok: !!(r.configured && r.codeOk), server: !!r.ok, web: true, configured: !!r.configured, codeOk: !!r.codeOk, model: r.model || '' }; }
+  else { const r = await api('/api/status'); AI = { ok: !!r.ai, server: !!r.ok, model: r.model || '' }; }
   checkAILabel();
 }
 function checkAILabel() {
   const el = $('#aist');
-  el.textContent = AI.ok ? `AI 연결됨 (${AI.model})` : HOSTED ? 'AI 미연결 · 수동 흐름 사용' : !AI.server ? '서버 없음 · AI·URL 가져오기 불가' : 'AI 미연결 · 수동 흐름 사용';
+  el.textContent = AI.ok ? `AI 연결됨 (${AI.model})` : AI.web && AI.configured ? 'AI: 접근 코드 필요' : !HOSTED && !AI.server ? '서버 없음 · AI 미연결' : 'AI 미연결 · 설정';
   el.className = 'aist' + (AI.ok ? ' on' : '');
 }
 
@@ -154,30 +158,57 @@ const realExps = j => S.experiences.filter(e => j?.sample || !e.sample);
 const reqs = j => j?.analysis ? ['duties', 'required', 'preferred'].flatMap(c => (j.analysis.cats[c] || []).map(x => ({ ...x, cat: c }))) : [];
 
 const TASKS = {
-  organize: {
+  story: {
     build(id) {
-      const e = exp(id); if (!e.raw?.trim()) throw new Error('자유 입력 원문이 비어 있습니다. 먼저 원문을 적어주세요.');
-      return `아래는 지원자가 두서없이 적은 경험 원문이다. 원문에 있는 내용만으로 항목을 나눠 정리하라. 원문에 없는 항목은 빈 문자열로 두고 그 항목 키를 unknown 배열에 넣어라. 표현을 부풀리지 말라.
+      const e = exp(id); if (!e.raw?.trim() && !hasText(e)) throw new Error('먼저 ①에 기억나는 일을 적어주세요.');
+      const asked = (e.story?.qs || []).map(q => ({ question: q.q, answer: q.answer || '' }));
+      return `지원자가 자유롭게 적은 경험 글과 추가 질문 답변이다. 두 가지를 하라.
+1) 글과 답변에 실제로 적힌 내용만으로 항목을 채운다. 적히지 않은 항목은 빈 문자열. 표현을 부풀리지 말고, 수치·기간·직책을 추측하지 않는다.
+2) 이력서 문장을 쓰는 데 아직 부족한 정보만 골라 최대 3개 질문한다. 우선순위: 회사·활동명·직책·기간 → 본인이 직접 한 행동(대상·방법) → 결과(수치가 없으면 결과물·맡은 범위·받은 피드백) → 상황·문제. 이미 채워진 항목, 이미 한 질문(asked)은 다시 묻지 않는다. 충분하면 questions는 빈 배열. 없는 수치를 예시로 넣지 않는다.
 항목 키: org(회사·활동명), period(기간), position(직책), situation(상황), problem(문제·목표), myRole(내 역할), reason(판단 이유), action(실행 내용), collab(협업), result(결과), evidence(근거 자료), learned(배운 점)
-출력 형식: {"org":"","period":"","position":"","situation":"","problem":"","myRole":"","reason":"","action":"","collab":"","result":"","evidence":"","learned":"","unknown":[],"notes":"정리하면서 애매했던 점"}
+출력 형식: {"fields":{"org":"","period":"","position":"","situation":"","problem":"","myRole":"","reason":"","action":"","collab":"","result":"","evidence":"","learned":""},"questions":[{"field":"항목키","question":""}],"notes":"애매했던 점 한 줄"}
 
-원문:
+글:
 """
-${e.raw}
-"""`;
+${e.raw || ''}
+"""
+지금 항목(지원자가 확인·수정한 값): ${JSON.stringify(Object.fromEntries(ALL.map(([k]) => [k, val(e, k)]).filter(([, v]) => v)))}
+asked: ${JSON.stringify(asked)}`;
     },
     apply(id, o) {
-      const e = exp(id); const fields = {};
-      for (const [k] of ALL) if (typeof o[k] === 'string' && o[k].trim()) fields[k] = o[k].trim();
-      if (!Object.keys(fields).length) throw new Error('응답에 정리된 항목이 없습니다.');
-      const source = [e.raw, ...ALL.map(([k]) => val(e, k))].join('\n'); const warn = {};
-      for (const [k, v] of Object.entries(fields)) {
-        const bad = HEAD.some(h => h[0] === k) ? (norm(source).includes(norm(v)) ? [] : [v]) : unsupported(v, source);
-        if (bad.length) warn[k] = bad;
+      const e = exp(id); if (!o.fields || typeof o.fields !== 'object') throw new Error('fields가 없습니다.');
+      const src = [e.raw, ...(e.story?.qs || []).map(q => q.answer), ...ALL.map(([k]) => val(e, k))].join('\n');
+      const upd = { ...(e.story?.upd || {}) }; let n = 0;
+      for (const [k] of ALL) {
+        const v = String(o.fields[k] || '').trim(); if (!v) continue; const cur = val(e, k).trim();
+        if (!cur) { setPath(e, HEAD.some(h => h[0] === k) ? k : 'f.' + k, v); if (unsupported(v, src).length) e.unknown[k] = true; n++; }
+        else if (norm(cur) !== norm(v)) upd[k] = v;
       }
-      e.aiDraft = { fields, warn, unknown: Array.isArray(o.unknown) ? o.unknown : [], notes: String(o.notes || ''), at: nowIso() };
-      const nw = Object.keys(warn).length;
-      return 'AI 정리본을 받았습니다. 아래에서 항목별로 사실관계를 확인하고 반영하세요. 반영하기 전까지 경험 원본은 바뀌지 않습니다.' + (nw ? `\n원문·입력에 없는 표현이 들어간 항목 ${nw}개를 표시했습니다. 반영하면 '확인 필요'로 표시됩니다.` : '');
+      const qs = (e.story?.qs || []).map(q => q.status === 'open' ? { ...q, status: q.answer?.trim() ? 'done' : 'skipped' } : q);
+      const seen = new Set(qs.map(q => norm(q.q)));
+      for (const q of (Array.isArray(o.questions) ? o.questions : []).slice(0, 3)) if (q?.question && !seen.has(norm(q.question))) qs.push({ id: uid(), field: LABEL[q.field] ? q.field : '', q: String(q.question), answer: '', status: 'open' });
+      e.story = { source: 'AI', at: nowIso(), notes: String(o.notes || ''), qs, upd }; e.updatedAt = nowIso();
+      const nq = qs.filter(q => q.status === 'open').length;
+      return `빈 항목 ${n}개를 채웠습니다${Object.keys(upd).length ? `, 이미 적힌 항목의 수정 제안 ${Object.keys(upd).length}개는 ②에서 확인하세요` : ''}. ${nq ? `추가 질문 ${nq}개` : '더 물을 질문 없음'}. 원문에 없는 수치·표현이 든 항목은 '확인 필요'로 표시했습니다.`;
+    }
+  },
+  bullets: {
+    build(id) {
+      const e = exp(id); if (!usable(e)) throw new Error('「실행 내용」이나 「결과」가 채워져야 문장을 만들 수 있습니다.');
+      return `아래 경험 항목만 근거로 이력서 경력 칸에 넣을 문장 2~5개를 써라. 규칙:
+- 항목·답변에 없는 수치·성과·기간·직책을 만들지 않는다. 한 문장에 한 가지 일. 명사형 종결(~운영, ~개선).
+- "주도·총괄·극대화" 같은 표현은 항목에 근거가 있을 때만. 성과 문장은 result·evidence에 있는 내용만.
+- basis에는 근거가 된 항목 문장을 그대로 옮긴다.
+출력 형식: {"bullets":[{"text":"","field":"action|result","basis":""}]}
+
+경험: ${JSON.stringify(expBrief(e))}
+답변: ${JSON.stringify((e.story?.qs || []).filter(q => q.answer?.trim()).map(q => ({ question: q.q, answer: q.answer })))}`;
+    },
+    apply(id, o) {
+      const e = exp(id); if (!Array.isArray(o.bullets) || !o.bullets.length) throw new Error('bullets 배열이 없습니다.');
+      const src = JSON.stringify(expBrief(e)) + (e.story?.qs || []).map(q => q.answer).join('\n');
+      e.bullets = { source: 'AI', at: nowIso(), items: o.bullets.filter(x => x?.text).map(x => ({ id: uid(), text: String(x.text).trim(), field: x.field === 'result' ? 'result' : 'action', basis: String(x.basis || ''), warn: unsupported(x.text, src).join(', '), use: true })) };
+      return `문장 ${e.bullets.items.length}개를 받았습니다. 고치거나 빼고 기본 이력서에 넣으세요.`;
     }
   },
   feedback: {
@@ -656,6 +687,18 @@ function preCheck(d) {
   return { out, sub: j?.analysis?.cats.submission || [] };
 }
 
+// 경험의 이력서 문장을 기본 문서의 그 경험 섹션에 넣는다(있으면 바꾸고, 바꾸기 전 버전을 남긴다)
+function putBullets(e, type) {
+  const d = S.docs.find(x => isMaster(x) && x.type === type) || makeMaster(type);
+  const had = d.groups.some(g => g.expId === e.id);
+  if (had || !docEmpty(d)) saveVersion(d, `「${expName(e)}」 넣기 전 자동 보관`);
+  if (!had) addExpGroups(d, [e.id]);
+  const g = d.groups.find(x => x.expId === e.id); g.title = groupTitle(e); g.unverified = headUnverified(e);
+  const ss = type === 'resume' ? e.bullets.items.filter(it => it.use !== false && it.text.trim()).map(it => ({ id: uid(), grp: g.key, label: it.field === 'result' ? '성과' : '주요 업무', field: it.field, text: it.text.trim(), expIds: [e.id], unverified: !!it.warn || !!e.unknown?.[it.field], edited: false }))
+    : sentencesFor(type, e, g.key);
+  d.sentences = d.sentences.filter(s => s.grp !== g.key).concat(ss); d.src[e.id] = snap(e); d.updatedAt = nowIso(); return d;
+}
+
 // ───────── 예시 데이터 (실제 데이터와 구분) ─────────
 function loadSamples() {
   if (S.experiences.some(e => e.sample)) return toast('예시 데이터가 이미 있습니다.');
@@ -705,22 +748,26 @@ const V = {};
 V.home = () => {
   const E = S.experiences, J = S.jobs, M = S.docs.filter(isMaster);
   const mr = M.find(d => d.type === 'resume');
-  const actions = `<div class="hero-actions">${mr ? `<a class="btn primary lg" href="#/doc/${mr.id}">기본 이력서 이어 쓰기</a>` : btn('newMaster', '기본 이력서 쓰기', { t: 'resume' }, 'primary lg')}${btn('newJob', '＋ 지원 공고 추가', {}, 'primary lg')}</div>`;
+  const U = E.filter(usable), W = E.filter(e => hasText(e) && !usable(e));
+  const actions = `<div class="hero-actions">${btn('newExp', '경험 이야기하기', {}, 'primary lg')}${mr ? `<a class="btn lg" href="#/doc/${mr.id}">기본 이력서 열기</a>` : ''}${btn('newJob', '＋ 지원 공고 추가', {}, 'lg')}</div>`;
+  const side = `<p class="hint">이미 이력서가 있다면: <a href="#/docs">가지고 있는 이력서 불러오기</a> · ${mr ? '' : `${btn('newMaster', '빈 양식에 직접 쓰기', { t: 'resume' }, 'link')}`}</p>`;
+  const next = !U.length ? (W.length ? `작성 중인 경험 ${W.length}개에 「실행 내용」이나 「결과」를 채우면 이력서 초안에 쓸 수 있습니다. <a href="#/exp/${W[0].id}">이어 쓰기 →</a>` : '기억나는 일 하나를 이야기하는 것부터 시작하세요. 질문에 답하면 이력서 문장까지 이어집니다.')
+    : !mr ? `초안에 쓸 수 있는 경험 ${U.length}개 — ${btn('newMaster', '기본 이력서 만들기', { t: 'resume' }, 'link')}` : !J.length ? '기본 이력서가 있습니다. 지원할 공고를 추가하면 공고에 맞춰 고칠 수 있습니다.' : '';
   if (!E.length && !J.length && !S.docs.length) return `<div class="onboard"><h1>취업 준비 노트</h1>
-<p class="lead">기본 이력서·경력기술서를 한 벌 써두고, 지원하는 공고마다 복사해서 맞춰 고칩니다.</p>${actions}
-<ol class="steps"><li><b>기본 이력서·경력기술서 쓰기</b> — 빈 양식에 바로 쓰거나, 가지고 있는 파일을 불러옵니다. 모든 경험을 다 넣은 '전체 버전'입니다.</li>
-<li><b>지원 공고 추가</b> — 공고를 붙여넣으면 주요 업무·자격요건·우대사항으로 나눕니다.</li>
-<li><b>공고용으로 복사해서 고치기</b> — 공고 요구사항과 내 문장을 나란히 보고, 순서·강조·표현을 바꿉니다. 기본 문서는 그대로 남습니다.</li>
-<li><b>제출 전 점검 · PDF</b> — 기본 문서에 없는 수치나 과장 표현을 걸러내고, 버전을 저장하고, 인쇄·PDF로 저장합니다.</li></ol>
-<p class="hint">문장이 약하다 싶으면 <a href="#/exp">경험 보관함</a>에서 경험을 정리하고 피드백을 받을 수 있습니다(선택). ${btn('loadSamples', '예시 데이터 보기', {}, 'link')}</p>${storageNote()}</div>`;
+<p class="lead">기억나는 일을 이야기하면, 부족한 부분을 질문으로 채워 이력서 문장까지 만듭니다.</p>${actions}
+<ol class="steps"><li><b>경험 이야기하기</b> — 회사명·기간을 몰라도 됩니다. 있었던 일을 생각나는 대로 적습니다.</li>
+<li><b>추가 질문에 답하기</b> — 이력서에 필요한데 빠진 것만 1~3개씩 묻습니다. 답한 건 다시 묻지 않습니다.</li>
+<li><b>기본 이력서·경력기술서 만들기</b> — 정리된 경험에서 문장을 제안받아 확인하고 넣습니다.</li>
+<li><b>공고별로 고치기</b> — 공고 URL을 붙여넣고, 요구사항과 연결된 경험을 근거로 회사별 문서를 고칩니다. 기본 문서와 경험 원본은 그대로 남습니다.</li></ol>
+${side}<p class="hint">${btn('loadSamples', '예시 데이터 보기', {}, 'link')}</p>${storageNote()}</div>`;
   const recent = [...E].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 6);
   const todo = E.flatMap(e => e.feedback.filter(x => x.status === 'open').map(x => ({ e, x }))).sort((a, b) => ['must', 'improve', 'optional'].indexOf(a.x.level) - ['must', 'improve', 'optional'].indexOf(b.x.level));
   const unchecked = E.filter(e => !e.fbAt);
-  return `<h1>대시보드</h1>${actions}${storageNote()}
+  return `<h1>대시보드</h1>${actions}${next ? `<p class="note">${next}</p>` : ''}${side}${storageNote()}
 <h2>기본 문서 <span class="meta">${M.length}개</span></h2>
 ${M.length ? `<div class="cards">${M.map(d => `<div class="card"><a href="#/doc/${d.id}"><b>${esc(d.title)}</b></a> ${badge(DOC_TYPES[d.type])}<p class="meta">채운 문장 ${d.sentences.filter(x => x.text.trim()).length}개 · 공고용 복사본 ${S.docs.filter(x => x.basedOn === d.id).length}개 · 수정 ${fmt(d.updatedAt)}</p></div>`).join('')}</div>` : `<p class="hint">아직 기본 문서가 없습니다. <a href="#/docs">이력서·경력기술서</a>에서 시작하세요.</p>`}
-<h2>작성 중인 경험 <span class="meta">${E.length}개</span></h2>
-${recent.length ? `<div class="cards">${recent.map(e => { const empty = ALL.filter(([k]) => !val(e, k).trim()).length; const unk = Object.values(e.unknown || {}).filter(Boolean).length; return `<div class="card"><a href="#/exp/${e.id}"><b>${esc(expName(e))}</b></a> ${sampleB(e)}<p class="meta">${esc(e.period || '기간 미입력')} · 빈 항목 ${empty}개${unk ? ` · 확인 필요 ${unk}개` : ''}</p><p class="meta">수정 ${fmt(e.updatedAt)}</p></div>`; }).join('')}</div>` : `<p class="hint">아직 경험이 없습니다.</p>`}
+<h2>경험 <span class="meta">초안에 쓸 수 있음 ${U.length} · 작성 중 ${W.length}${E.length - U.length - W.length ? ` · 비어 있음 ${E.length - U.length - W.length}` : ''}</span></h2>
+${recent.length ? `<div class="cards">${recent.map(e => { const empty = ALL.filter(([k]) => !val(e, k).trim()).length; const unk = Object.values(e.unknown || {}).filter(Boolean).length; return `<div class="card"><a href="#/exp/${e.id}"><b>${esc(e.org || (e.raw?.trim() ? e.raw.trim().slice(0, 24) + '…' : '새 경험'))}</b></a> ${sampleB(e)} ${badge(...expState(e))}<p class="meta">${esc(e.period || '기간 미입력')} · 빈 항목 ${empty}개${unk ? ` · 확인 필요 ${unk}개` : ''}</p><p class="meta">수정 ${fmt(e.updatedAt)}</p></div>`; }).join('')}</div>` : `<p class="hint">아직 경험이 없습니다.</p>`}
 <h2>보완할 항목</h2>
 ${todo.length || unchecked.length ? `<div class="card">
 ${['must', 'improve', 'optional'].map(lv => `${badge(LEVELS[lv] + ' ' + todo.filter(t => t.x.level === lv).length, lv)}`).join(' ')}
@@ -733,31 +780,93 @@ ${J.map(j => { const R = reqs(j); const reqUnk = R.filter(r => r.cat === 'requir
 </tbody></table></div>` : `<p class="hint">아직 지원 공고가 없습니다.</p>`}`;
 };
 
+// 경험 상태: 비어 있음 → 작성 중 → 초안에 쓸 수 있음(주요 업무·결과 중 하나라도 있음)
+const hasText = e => !!(e.raw?.trim() || ALL.some(([k]) => val(e, k).trim()));
+const usable = e => !!(e.f?.action?.trim() || e.f?.result?.trim());
+const expState = e => usable(e) ? ['초안에 쓸 수 있음', 'ok'] : hasText(e) ? ['작성 중', 'improve'] : ['비어 있음', ''];
+// 규칙 질문 순서: 이력서 한 줄에 꼭 필요한 것부터
+const Q_ORDER = ['org', 'position', 'period', 'action', 'result', 'myRole', 'situation', 'problem', 'evidence', 'reason', 'collab', 'learned'];
+
 V.exp = r => {
   if (!r.id) {
-    const E = S.experiences;
-    return `<h1>경험 보관함</h1><div class="row">${btn('newExp', '＋ 자유 입력으로 추가', { m: 'free' }, 'primary')}${btn('newExp', '＋ 질문에 답하며 추가', { m: 'q' }, 'primary')}</div>
+    const E = S.experiences, U = E.filter(usable).length, D = E.filter(e => hasText(e) && !usable(e)).length;
+    return `<h1>경험 보관함</h1><p class="hint">초안에 쓸 수 있음 ${U}개 · 작성 중 ${D}개 · 비어 있음 ${E.length - U - D}개 — 주요 업무나 결과가 채워진 경험만 이력서 초안에 들어갑니다.</p>
+<div class="row">${btn('newExp', '＋ 경험 이야기하기', {}, 'primary')}</div>
 <div class="row"><input type="search" id="exp-q" placeholder="회사·활동명, 내용 검색" style="max-width:360px">
 <select id="exp-kind"><option value="">전체 종류</option><option>회사</option><option>프로젝트·활동</option></select>
 <select id="exp-state"><option value="">전체 상태</option><option value="must">제출 전 확인 필요 있음</option><option value="unchecked">피드백 안 돌림</option><option value="sample">예시만</option><option value="real">내 데이터만</option></select></div>
-${E.length ? `<div class="cards" id="exp-cards">${E.map(e => `<div class="card" data-text="${esc([e.org, e.position, e.period, e.raw, ...Object.values(e.f || {})].join(' ').toLowerCase())}" data-kind="${esc(e.kind)}" data-must="${openCount(e, 'must') ? 1 : 0}" data-unchecked="${e.fbAt ? 0 : 1}" data-sample="${e.sample ? 1 : 0}">
-<a href="#/exp/${e.id}"><b>${esc(expName(e))}</b></a> ${sampleB(e)} ${badge(e.kind)}
-<p class="meta">${esc(e.period || '기간 미입력')}</p>
-<p class="meta">${['must', 'improve'].map(lv => openCount(e, lv) ? badge(LEVELS[lv] + ' ' + openCount(e, lv), lv) : '').filter(Boolean).join(' ') || (e.fbAt ? '열린 피드백 없음' : '피드백 안 돌림')}</p>
-<div class="row"><a class="btn" href="#/exp/${e.id}">편집</a><a class="btn quiet" href="#/fb/${e.id}">피드백</a></div></div>`).join('')}</div><p class="hint" id="exp-none" hidden>조건에 맞는 경험이 없습니다.</p>` : `<div class="card"><p>아직 경험이 없습니다. 위 버튼으로 시작하세요.</p><p class="hint">자유 입력: 생각나는 대로 적거나 붙여넣기 · 질문형: 한 번에 최대 3개 질문에 답하기</p></div>`}`;
+${E.length ? `<div class="cards" id="exp-cards">${E.map(e => { const [st, c] = expState(e); return `<div class="card" data-text="${esc([e.org, e.position, e.period, e.raw, ...Object.values(e.f || {})].join(' ').toLowerCase())}" data-kind="${esc(e.kind)}" data-must="${openCount(e, 'must') ? 1 : 0}" data-unchecked="${e.fbAt ? 0 : 1}" data-sample="${e.sample ? 1 : 0}">
+<a href="#/exp/${e.id}"><b>${esc(e.org || (e.raw?.trim() ? e.raw.trim().slice(0, 24) + '…' : '새 경험'))}</b></a> ${sampleB(e)} ${badge(st, c)}
+<p class="meta">${esc([e.position, e.period].filter(Boolean).join(' · ') || '회사·기간 미입력')}</p>
+<div class="row"><a class="btn" href="#/exp/${e.id}">${hasText(e) ? '이어 쓰기' : '쓰기'}</a>${hasText(e) ? '' : confirmBtn('del-exp-' + e.id, '삭제', 'delExp', { id: e.id })}</div></div>`; }).join('')}</div><p class="hint" id="exp-none" hidden>조건에 맞는 경험이 없습니다.</p>`
+    : `<div class="card"><p>아직 경험이 없습니다. 기억나는 일 하나를 적는 것부터 시작하세요.</p>${btn('newExp', '＋ 경험 이야기하기', {}, 'primary')}</div>`}`;
   }
   const e = exp(r.id); if (!e) return notFound();
-  const mode = r.sub === 'q' ? 'q' : 'free';
+  const [st, stc] = expState(e);
   const head = `<div class="page-head"><a class="back" href="#/exp">← 경험 보관함</a>
-<h1>${esc(e.org || '제목 없는 경험')} ${sampleB(e)}</h1>
-<div class="row"><span class="seg"><a href="#/exp/${e.id}" class="${mode === 'free' ? 'on' : ''}">자유 입력</a><a href="#/exp/${e.id}/q" class="${mode === 'q' ? 'on' : ''}">질문형 입력</a></span>
-<a class="btn primary" href="#/fb/${e.id}">피드백 보기 →</a>${confirmBtn('del-exp-' + e.id, '삭제', 'delExp', { id: e.id })}</div></div>`;
-  const left = mode === 'free' ? `<h2>자유 입력 원문</h2><p class="hint">두서없이 적거나 붙여넣어도 됩니다. 원문은 AI 정리와 별개로 그대로 보존됩니다.</p>
-${ta(`exp:${e.id}:raw`, e.raw, 12, '예: 매장에서 신규 직원 온보딩을 맡았는데 …')}
-${aiPanel('organize', e.id, 'AI로 항목 정리', '원문만 보냅니다. 결과는 아래에 따로 보관되고, 항목별로 [반영]을 눌러야 오른쪽 항목에 들어갑니다.')}
-${draftView(e)}` : qPane(e);
-  return head + split('exp', { label: mode === 'free' ? '원문' : '질문', html: left }, { label: '정리된 항목', html: fieldsForm(e) });
+<h1>${esc(e.org || '새 경험')} ${sampleB(e)} ${badge(st, stc)}</h1>
+<ol class="flow"><li class="${hasText(e) ? 'done' : 'on'}"><a href="#/exp/${e.id}#s1">이야기하기</a></li><li class="${usable(e) ? 'done' : hasText(e) ? 'on' : ''}"><a href="#/exp/${e.id}#s2">질문에 답하기</a></li><li class="${e.bullets?.put ? 'done' : usable(e) ? 'on' : ''}"><a href="#/exp/${e.id}#s3">이력서 문장</a></li></ol></div>`;
+  return head + split('exp', { label: '작성', html: storyPane(e) }, { label: '정리된 항목', html: summaryPane(e) });
 };
+function aiLine(e) {
+  return AI.ok ? `<p class="meta">AI 연결됨 (${esc(AI.model)}) — 누르면 내 글과 답변만 보냅니다.</p>`
+    : e.story?.source === 'AI' ? `<p class="meta">AI 미연결 — 아래 질문은 Claude 답을 붙여넣어 받은 것입니다. 답한 뒤 요청문을 다시 복사해 붙여넣으면 다음 질문을 받습니다. <a href="#/backup">AI 연결 설정</a></p>`
+    : `<p class="meta">AI 미연결 — 아래 질문은 <b>규칙</b>으로 만듭니다(글 내용을 읽고 만든 질문이 아님). <a href="#/backup">AI 연결 설정</a></p>`;
+}
+function storyPane(e) {
+  const s = e.story, aiQs = s?.source === 'AI', open = aiQs ? s.qs.filter(q => q.status === 'open') : [], done = aiQs ? s.qs.filter(q => q.status !== 'open') : [];
+  const upd = Object.entries(s?.upd || {});
+  const per = !e.period?.trim() && e.raw?.match(PERIOD)?.[0];
+  return `<section id="s1"><h2>① 기억나는 일을 자유롭게</h2>
+<p class="hint">회사명·기간을 몰라도 됩니다. 어떤 일이 있었고, 내가 무엇을 했고, 어떻게 됐는지 생각나는 대로 적으세요.</p>
+${ta(`exp:${e.id}:raw`, e.raw, 7, '예: 룰루레몬에서 키리더로 일할 때 근처 회사에서 단체 주문 문의가 자주 왔다. 내가 담당해서 목적·예산을 묻고 제품을 추천하는 방식을 만들었고, 주문 절차도 정리했다.')}
+${aiLine(e)}
+${AI.ok ? `<div class="row">${btn('aiRun', UI.busy['story:' + e.id] ? '정리하는 중…' : aiQs ? '다시 정리하고 질문 받기' : '정리하고 질문 받기', { t: 'story', c: e.id }, 'primary', !!UI.busy['story:' + e.id] || !e.raw?.trim())}</div>${UI.aiMsg['story:' + e.id] ? `<p class="msg ${UI.aiMsg['story:' + e.id].type}">${esc(UI.aiMsg['story:' + e.id].text)}</p>` : ''}`
+    : `<details><summary>AI 없이 Claude에 직접 물어보기 (요청문 복사 → 답 붙여넣기)</summary>${aiPanel('story', e.id, '글 정리 + 추가 질문', '내 글과 답변만 요청문에 담깁니다. Claude(claude.ai)에 붙여넣고 받은 답을 붙여넣으면 AI로 정리한 것과 같게 반영됩니다.')}</details>`}</section>
+<section id="s2"><h2>② 추가 질문</h2>
+${aiQs ? `<p class="hint">AI가 글에서 부족한 부분만 골라 물은 질문입니다 ${s.at ? `(${fmt(s.at)})` : ''}. 모르면 "모름"이라고 적으세요.</p>
+${open.length ? open.map(q => `<div class="fb optional"><p><b>${esc(q.q)}</b> <span class="meta">${esc(LABEL[q.field] || '')}</span></p>${ta(`story:${e.id}|${q.id}:answer`, q.answer, 2, '답변')}</div>`).join('') + `<div class="row">${AI.ok ? btn('aiRun', UI.busy['story:' + e.id] ? '반영하는 중…' : '답변 반영하고 다음 질문', { t: 'story', c: e.id }, 'primary', !!UI.busy['story:' + e.id]) : '<span class="meta">답한 뒤 위 「Claude에 직접 물어보기」에서 요청문을 다시 복사해 붙여넣으세요.</span>'}</div>`
+      : `<p class="msg ok">지금 더 물을 질문이 없습니다. ③으로 넘어가세요.</p>`}
+${done.length ? `<details><summary>답한 질문 ${done.length}개 (다시 묻지 않음)</summary><ul>${done.map(q => `<li>${esc(q.q)}<br><span class="meta">답: ${esc(q.answer || '—')}</span></li>`).join('')}</ul></details>` : ''}
+${s.notes ? `<p class="meta">AI 메모: ${esc(s.notes)}</p>` : ''}
+${upd.length ? `<div class="proposal"><h4>답변을 반영해 바뀐 항목 <span class="meta">이미 채워진 칸은 확인 후에만 바꿉니다</span></h4>${upd.map(([k, v]) => `<div class="cmp"><div><span>지금 「${esc(LABEL[k])}」</span><div class="before">${esc(val(e, k))}</div></div><div><span>AI 제안</span><div class="after">${esc(v)}</div></div></div><div class="row">${btn('storyUpd', '적용', { id: e.id, k }, 'primary small')}${btn('storyUpdSkip', '그대로 두기', { id: e.id, k }, 'quiet small')}</div>`).join('')}</div>` : ''}`
+    : ruleQs(e)}
+${per ? `<p class="note">글에서 기간처럼 보이는 표현을 찾았습니다: <b>${esc(per)}</b> ${btn('usePeriod', '기간 칸에 넣기', { id: e.id, p: per }, 'link')} <span class="meta">(규칙으로 찾은 것 — 맞는지 확인하세요)</span></p>` : ''}
+${!AI.ok && e.raw?.trim() && !e.f?.action?.trim() ? `<p class="note">AI 없이는 글을 항목으로 나눠 주지 못합니다. ${btn('rawToAction', '적은 글을 「실행 내용」에 그대로 옮기기', { id: e.id }, 'link')} — 옮긴 뒤 오른쪽에서 다듬을 수 있습니다.</p>` : ''}</section>
+<section id="s3"><h2>③ 이력서용 문장</h2>${bulletPane(e)}</section>`;
+}
+function ruleQs(e) {
+  const pend = Q_ORDER.filter(k => !val(e, k).trim() && !e.unknown?.[k] && !e.qSkip?.[k]);
+  const now = pend.slice(0, 3), skipped = Object.keys(e.qSkip || {}).filter(k => e.qSkip[k] && !val(e, k).trim());
+  return `<p class="hint"><b>규칙 질문</b> — 비어 있는 항목을 이력서에 중요한 순서로 3개씩 묻습니다. 답은 오른쪽 항목에 바로 저장되고, 답한 항목은 다시 묻지 않습니다. 남은 질문 ${pend.length}개</p>
+${now.length ? now.map(k => `<div class="fb optional"><p><b>${esc(QUESTIONS[k])}</b></p>${HEAD.some(h => h[0] === k) ? inp(bpath(e, k), val(e, k), k === 'period' ? '예: 2021.03 – 2023.08' : '') : ta(bpath(e, k), val(e, k), 2, PH[k] || '')}
+<div class="row">${btn('qUnknown', '모름 · 확인 필요로 표시', { id: e.id, k }, 'quiet small')}${btn('qSkip', '나중에', { id: e.id, k }, 'quiet small')}</div></div>`).join('') + `<div class="row">${btn('rerender', '답했어요 · 다음 질문', {}, 'primary')}</div>`
+    : `<p class="msg ok">물어볼 빈 항목이 없습니다.</p>`}
+${skipped.length ? `<p class="hint">나중으로 미룬 질문 ${skipped.length}개 ${btn('qUnskip', '다시 보기', { id: e.id }, 'link')}</p>` : ''}`;
+}
+function bulletPane(e) {
+  if (!usable(e)) return `<p class="hint">「실행 내용」이나 「결과」가 채워지면 이력서 문장을 만들 수 있습니다. 위 질문에 답하거나 오른쪽 항목에 직접 적으세요.</p>`;
+  const b = e.bullets, masterR = S.docs.find(d => isMaster(d) && d.type === 'resume'), inR = masterR?.groups.some(g => g.expId === e.id);
+  return `<p class="hint">이력서 경력 칸에 들어갈 문장입니다. ${AI.ok ? 'AI는 입력한 항목에 있는 사실만으로 문장을 다듬습니다.' : 'AI 미연결: 입력한 문장을 <b>다듬지 않고 그대로</b> 옮깁니다.'}</p>
+<div class="row">${AI.ok ? btn('aiRun', UI.busy['bullets:' + e.id] ? '만드는 중…' : 'AI로 이력서 문장 제안', { t: 'bullets', c: e.id }, 'primary', !!UI.busy['bullets:' + e.id]) : ''}${btn('bulletsRule', '입력한 문장 그대로 옮기기 (규칙)', { id: e.id }, AI.ok ? 'quiet' : 'primary')}</div>
+${AI.ok ? '' : `<details><summary>AI 없이 Claude에 직접 물어보기</summary>${aiPanel('bullets', e.id, '이력서 문장 제안', '이 경험의 항목과 답변만 담깁니다.')}</details>`}
+${UI.aiMsg['bullets:' + e.id] && AI.ok ? `<p class="msg ${UI.aiMsg['bullets:' + e.id].type}">${esc(UI.aiMsg['bullets:' + e.id].text)}</p>` : ''}
+${b?.items?.length ? `<div class="proposal"><h4>문장 제안 <span class="meta">${b.source === 'AI' ? 'AI' : '규칙 — 입력 그대로'} · ${fmt(b.at)}</span></h4>
+${b.items.map(it => `<div class="bul ${it.use === false ? 'off' : ''}"><label class="chk">${`<input type="checkbox" data-b="bul:${e.id}|${it.id}:use" ${it.use !== false ? 'checked' : ''} data-rr>`} 넣기</label> <span class="chip">${it.field === 'result' ? '성과' : '주요 업무'}</span>
+${ta(`bul:${e.id}|${it.id}:text`, it.text, 1)}
+${it.basis ? `<p class="meta">근거: “${esc(it.basis)}”</p>` : ''}${it.warn ? `<p class="msg err">입력에 없는 표현(${esc(it.warn)}) — 넣으면 '확인 필요'로 표시됩니다</p>` : ''}</div>`).join('')}
+<div class="row">${btn('putBullets', inR ? '기본 이력서의 이 경험 문장 바꾸기' : '기본 이력서에 넣기', { id: e.id, t: 'resume' }, 'primary')}${btn('putBullets', '기본 경력기술서에도 넣기 (항목 그대로)', { id: e.id, t: 'career' }, 'quiet')}</div>
+${b.put ? `<p class="msg ok">기본 이력서에 넣었습니다 (${fmt(b.put)}). <a href="#/doc/${masterR?.id}">기본 이력서 열기 →</a> 공고에 맞춰 고치는 건 지원 회사 → 지원 문서에서 합니다.</p>` : ''}</div>` : ''}`;
+}
+function summaryPane(e) {
+  const filled = ALL.filter(([k]) => val(e, k).trim()), unk = ALL.filter(([k]) => e.unknown?.[k]);
+  return `<h2>정리된 항목 <span class="meta">${ALL.length}개 중 ${filled.length}개</span></h2>
+<p><b>${esc(e.org || '회사·활동명 ?')}</b> · ${esc(e.position || '직책 ?')} · ${esc(e.period || '기간 ?')}</p>
+${filled.filter(([k]) => !HEAD.some(h => h[0] === k)).map(([k, l]) => `<p class="sum"><span class="lbl">${l}${e.unknown?.[k] ? ' ' + badge('확인 필요', 'must') : ''}</span>${esc(val(e, k).slice(0, 90))}${val(e, k).length > 90 ? '…' : ''}</p>`).join('') || '<p class="muted">아직 정리된 내용이 없습니다.</p>'}
+${unk.length ? `<p class="meta">확인 필요: ${unk.map(([, l]) => l).join(', ')}</p>` : ''}
+<details ${UI.show['allf:' + e.id] ? 'open' : ''}><summary>전체 항목 보기·고치기</summary>${fieldsForm(e)}${draftView(e)}</details>
+<p class="meta"><a href="#/fb/${e.id}">규칙 점검·AI 피드백으로 더 보완하기 →</a> · ${confirmBtn('del-exp-' + e.id, '경험 삭제', 'delExp', { id: e.id })}</p>`;
+}
 function draftView(e) {
   const d = e.aiDraft; if (!d) return '';
   return `<h3>AI 정리본 <span class="meta">${fmt(d.at)}</span></h3><p class="hint">참고용 정리입니다. 사실과 다르면 반영하지 말고 오른쪽 항목에서 직접 고치세요.</p>
@@ -766,17 +875,8 @@ ${ALL.filter(([k]) => d.fields[k]).map(([k, l]) => { const same = val(e, k) === 
 ${d.unknown.length ? `<p class="meta">원문에서 확인 안 된 항목: ${d.unknown.map(k => LABEL[k] || k).join(', ')}</p>` : ''}
 <div class="row">${btn('applyDraftEmpty', '빈 항목에만 모두 반영', { id: e.id })}</div>`;
 }
-function qPane(e) {
-  const pend = ALL.map(([k]) => k).filter(k => !val(e, k).trim() && !e.unknown?.[k] && !e.qSkip?.[k]);
-  const now = pend.slice(0, 3); const skipped = Object.keys(e.qSkip || {}).filter(k => e.qSkip[k] && !val(e, k).trim());
-  return `<h2>질문에 답하며 정리</h2><p class="hint">한 번에 최대 3개만 묻습니다. 답은 오른쪽 항목에 바로 저장됩니다. 남은 질문 ${pend.length}개</p>
-${now.length ? now.map(k => `<div class="fb optional"><p><b>${esc(QUESTIONS[k])}</b></p>${k === 'org' || k === 'period' || k === 'position' ? inp(bpath(e, k), val(e, k)) : ta(bpath(e, k), val(e, k), 3)}
-<div class="row">${btn('qUnknown', '모름 · 확인 필요로 표시', { id: e.id, k }, 'quiet')}${btn('qSkip', '나중에', { id: e.id, k }, 'quiet')}</div></div>`).join('') + `<div class="row">${btn('rerender', '답했어요 · 다음 질문 보기', {}, 'primary')}</div>`
-    : `<div class="card"><p>지금 물어볼 질문이 없습니다.</p><a class="btn primary" href="#/fb/${e.id}">피드백 받기 →</a></div>`}
-${skipped.length ? `<p class="hint">나중으로 미룬 질문 ${skipped.length}개 ${btn('qUnskip', '다시 보기', { id: e.id }, 'link')}</p>` : ''}`;
-}
 function fieldsForm(e) {
-  return `<h2>정리된 항목</h2><p class="hint">모든 칸을 채우지 않아도 자동 저장됩니다. 모르면 비워두거나 '확인 필요'에 체크하세요.</p>
+  return `<p class="hint">모든 칸을 채우지 않아도 자동 저장됩니다. 모르면 비워두거나 '확인 필요'에 체크하세요.</p>
 <div class="fld"><span>종류</span>${sel(`exp:${e.id}:kind`, e.kind, [['회사', '회사'], ['프로젝트·활동', '프로젝트·활동']], false)}</div>
 <div class="grid3">${HEAD.map(([k, l]) => `<div class="fld"><span>${l}</span>${inp(`exp:${e.id}:${k}`, e[k], k === 'period' ? '예: 2021.03 – 2023.08' : '')}${chk(`exp:${e.id}:unknown.${k}`, e.unknown?.[k], '확인 필요')}</div>`).join('')}</div>
 ${FIELDS.map(([k, l]) => `<div class="fld"><span>${l}</span>${ta(`exp:${e.id}:f.${k}`, e.f?.[k], 3, PH[k] || '')}${chk(`exp:${e.id}:unknown.${k}`, e.unknown?.[k], '확인 필요')}</div>`).join('')}
@@ -924,7 +1024,7 @@ ${M.length ? M.map(m => `<div class="row">${btn('tailor', `＋ "${esc(m.title)}"
 <details ${p ? 'open' : ''}><summary>경험 보관함에서 새로 만들기 (선택)</summary>
 <div class="row">${btn('pickDoc', '＋ 경험으로 이력서 만들기', { id: j.id, t: 'resume' })}${btn('pickDoc', '＋ 경험으로 경력기술서 만들기', { id: j.id, t: 'career' })}</div>
 ${p ? `<div class="fb optional"><b>${DOC_TYPES[p.type]}에 넣을 경험 선택</b><p class="hint">[경험 연결]에서 이 공고와 연결한 경험은 미리 선택돼 있고, 연결이 많은 순서로 배치됩니다. ${p.type === 'resume' ? "[작성 전략]의 요약 메시지·핵심 역량은 요약·핵심 역량 초안으로 들어갑니다(미확인 상태)." : ''} '확인 필요' 항목에서 나온 문장은 미확인으로 표시돼 제출본에서 빠집니다.</p>
-${realExps(j).map(e => `<label class="chk" style="display:flex"><input type="checkbox" data-a2="pickExp" data-e="${e.id}" ${p.sel.includes(e.id) ? 'checked' : ''}> ${esc(expName(e))} <span class="meta">${esc(e.period)} ${linkScore(job(p.jobId), e.id) ? '· 이 공고와 연결됨' : ''} ${openCount(e, 'must') ? '· 제출 전 확인 필요 ' + openCount(e, 'must') : ''}</span></label>`).join('') || '<p class="muted">경험이 없습니다.</p>'}
+${realExps(j).filter(usable).map(e => `<label class="chk" style="display:flex"><input type="checkbox" data-a2="pickExp" data-e="${e.id}" ${p.sel.includes(e.id) ? 'checked' : ''}> ${esc(expName(e))} <span class="meta">${esc(e.period)} ${linkScore(job(p.jobId), e.id) ? '· 이 공고와 연결됨' : ''} ${openCount(e, 'must') ? '· 제출 전 확인 필요 ' + openCount(e, 'must') : ''}</span></label>`).join('') || '<p class="muted">경험이 없습니다.</p>'}
 <div class="row">${btn('genDoc', '문서 만들기', {}, 'primary', !p.sel.length)}${btn('cancelPick', '취소', {}, 'quiet')}</div></div>` : ''}</details>
 ${D.length ? `<table class="t"><thead><tr><th>문서</th><th>수정 시각</th><th>버전</th><th>알림</th></tr></thead><tbody>${D.map(d => `<tr><td><a href="#/doc/${d.id}">${esc(d.title)}</a> ${badge(DOC_TYPES[d.type])}${d.basedOn ? ` <span class="meta">기본 문서에서 복사</span>` : ''}</td><td>${fmt(d.updatedAt)}</td><td>${d.versions.length}</td><td>${staleExps(d).length ? badge('원본 변경 ' + staleExps(d).length, 'improve') : '-'}</td></tr>`).join('')}</tbody></table>` : '<p class="muted">아직 문서가 없습니다.</p>'}</div>`;
 };
@@ -1022,19 +1122,20 @@ ${empty ? '' : `${d.importedFrom?.text ? `<details class="no-print"><summary>불
   return head + `<div class="doc-layout">${split('doc', { label: '문서', html: left }, { label: `피드백${nIssue ? ' ' + nIssue : ''}`, html: `<div id="fbpanel">${fbPanel(d)}</div>` })}</div>`;
 };
 function emptyState(d) {
-  const E = realExps(job(d.jobId));
+  const all = realExps(job(d.jobId)), E = all.filter(usable), W = all.filter(e => hasText(e) && !usable(e));
   return `<div class="empty no-print"><h2>어디서부터 채울까요?</h2>
-${E.length ? `<p>경험 보관함에 저장한 경험 ${E.length}개가 있습니다. 골라서 넣으면 회사·직책·기간과 주요 업무·성과 문장이 초안으로 들어가고, 오른쪽에서 문장마다 보완할 곳을 짚어 드립니다.</p>
+${E.length ? `<p>초안에 쓸 수 있는 경험 ${E.length}개가 있습니다${W.length ? ` (작성 중 ${W.length}개는 제외)` : ''}. 골라서 넣으면 회사·직책·기간과 주요 업무·성과 문장이 초안으로 들어가고, 오른쪽에서 문장마다 보완할 곳을 짚어 드립니다.</p>
 <div class="row">${btn('draftPick', '저장한 경험에서 초안 만들기', { id: d.id }, 'primary lg')}</div>`
-    : `<p>아직 저장한 경험이 없습니다. 질문 몇 개에 답하면 경험이 정리되고, 그걸로 이 문서의 초안을 만듭니다.</p>
-<div class="row">${btn('newExp', '질문에 답하며 경험 추가', { m: 'q' }, 'primary lg')}<a class="btn" href="#/docs">가지고 있는 이력서 불러오기</a></div>`}
+    : W.length ? `<p>작성 중인 경험 ${W.length}개가 있지만 「실행 내용」·「결과」가 비어 있어 아직 초안에 쓸 수 없습니다.</p><ul>${W.map(e => `<li><a href="#/exp/${e.id}#s2">${esc(e.org || e.raw.trim().slice(0, 30) || '새 경험')}</a> — 질문에 답해 채우기</li>`).join('')}</ul><div class="row">${btn('newExp', '경험 이야기하기', {}, 'quiet')}</div>`
+    : `<p>아직 초안에 쓸 경험이 없습니다. 기억나는 일을 이야기하고 질문에 답하면, 그걸로 이 문서의 초안을 만듭니다.</p>
+<div class="row">${btn('newExp', '경험 이야기하기', {}, 'primary lg')}<a class="btn" href="#/docs">가지고 있는 이력서 불러오기</a></div>`}
 <p class="hint">경력 요약·핵심 역량은 경력 문장이 채워진 뒤에 써도 됩니다. ${btn('toggle', '빈 양식에 직접 쓰기', { k: 'blank:' + d.id }, 'link')}</p></div>`;
 }
 function draftPicker(d) {
-  const p = UI.dpick, j = job(d.jobId), E = realExps(j);
+  const p = UI.dpick, j = job(d.jobId), E = realExps(j).filter(hasText);
   return `<div class="empty no-print"><h2>초안에 넣을 경험 고르기</h2><p class="hint">${j ? '[경험 연결]에서 이 공고와 연결한 경험이 먼저 선택돼 있고, 연결이 많은 순서로 배치됩니다. ' : ''}경험의 '확인 필요' 항목에서 나온 문장은 미확인으로 들어가 제출본에서 빠집니다.</p>
-${E.map(e => { const inDoc = d.groups.some(g => g.expId === e.id); return `<label class="chk pick"><input type="checkbox" data-a2="dpickExp" data-e="${e.id}" ${p.sel.includes(e.id) ? 'checked' : ''} ${inDoc ? 'disabled' : ''}> <b>${esc(expName(e))}</b> <span class="meta">${esc(e.period || '기간 미입력')}${inDoc ? ' · 이미 문서에 있음' : ''}${linkScore(j, e.id) ? ' · 이 공고와 연결됨' : ''}${e.f?.action || e.f?.result ? '' : ' · 주요 업무·성과가 비어 있음'}</span></label>`; }).join('')}
-<div class="row">${btn('draftGen', `초안 만들기${p.sel.length ? ` (${p.sel.length}개)` : ''}`, { id: d.id }, 'primary', !p.sel.length)}${btn('draftCancel', '취소', {}, 'quiet')}${btn('newExp', '＋ 경험 새로 추가', { m: 'q' }, 'link')}</div></div>`;
+${E.map(e => { const inDoc = d.groups.some(g => g.expId === e.id), ok = usable(e); return `<label class="chk pick"><input type="checkbox" data-a2="dpickExp" data-e="${e.id}" ${p.sel.includes(e.id) ? 'checked' : ''} ${inDoc || !ok ? 'disabled' : ''}> <b>${esc(expName(e))}</b> <span class="meta">${esc(e.period || '기간 미입력')}${inDoc ? ' · 이미 문서에 있음' : ''}${linkScore(j, e.id) ? ' · 이 공고와 연결됨' : ''}</span>${ok ? '' : ` <a href="#/exp/${e.id}#s2">실행 내용·결과가 비어 있어 쓸 수 없음 — 채우기</a>`}</label>`; }).join('') || '<p class="muted">쓸 수 있는 경험이 없습니다.</p>'}
+<div class="row">${btn('draftGen', `초안 만들기${p.sel.length ? ` (${p.sel.length}개)` : ''}`, { id: d.id }, 'primary', !p.sel.length)}${btn('draftCancel', '취소', {}, 'quiet')}${btn('newExp', '＋ 경험 이야기하기', {}, 'link')}</div></div>`;
 }
 function secView(d, g, i) {
   const ss = d.sentences.filter(s => s.grp === g.key), j = job(d.jobId);
@@ -1142,16 +1243,37 @@ V.print = r => {
 <article class="print-doc"><h1>${esc(d.title)}</h1>${body || '<p>제출 가능한 문장이 없습니다.</p>'}</article>`;
 };
 
+const AI_FEATURES = [['경험 글 정리 + 부족한 것만 추가 질문', '경험 ① ②'], ['이력서용 문장 제안', '경험 ③'], ['AI 피드백 · 답변 반영 수정안', '경험 피드백'], ['문장 다시 쓰기 · 수정 요청 · 공고 맞춤 제안', '문서 편집'], ['공고 분석 · 회사 분석 · 요구사항–경험 연결', '지원 회사']];
+const RULE_FEATURES = ['비어 있는 항목을 순서대로 묻는 질문', '경험 규칙 점검(역할·수치 근거·과장 표현 등)', '문장 점검(수치 근거·과장·역할·구체성·확인 필요)', '공고 요구사항 규칙 추출 · 요구사항과 내 문장의 단어 겹침', '제출 전 점검 · 이력서 파일에서 글자 뽑기'];
+function aiSettings() {
+  const mode = CLAUDE ? 'Claude 아티팩트 — 내 Claude 계정으로 실행' : HOSTED ? '웹사이트 — 사이트 AI 서버(Vercel)를 거쳐 실행' : '내 컴퓨터 — 로컬 서버(server.py)로 실행';
+  const state = AI.ok ? `<span class="badge ok">연결됨</span> ${esc(AI.model)}` : `<span class="badge off">미연결</span>`;
+  const how = CLAUDE ? (AI.ok ? '' : '<p class="hint">이 화면에서는 Claude 계정 AI를 쓸 수 없습니다(허용 거절 또는 미지원).</p>')
+    : HOSTED ? (!AI.server ? `<p><b>사이트 AI 서버에 연결하지 못했습니다.</b> 인터넷 연결을 확인하고 새로고침하세요. 이 사이트 주소(github.io)가 아닌 곳에서 열었다면 AI 서버가 요청을 받지 않습니다.</p>`
+      : !AI.configured ? `<p><b>사이트 AI 서버에 API 키가 아직 없습니다.</b> 사이트 주인이 한 번만 설정하면 켜집니다. 키는 Vercel 서버에만 저장되고 이 사이트 코드·브라우저에는 들어가지 않습니다.</p>
+<pre class="code">cd 10-projects/13-job-prep/fetch-api
+npx vercel env add ANTHROPIC_API_KEY production   # Anthropic 콘솔에서 만든 API 키
+npx vercel env add ACCESS_CODE production         # 내가 정하는 접근 코드(아무나 못 쓰게)
+npx vercel deploy --prod</pre><p class="hint">그다음 이 화면에 접근 코드를 입력하면 연결됩니다. 사용량은 그 API 키의 계정에 청구됩니다.</p>`
+      : `<p>${AI.codeOk ? '접근 코드가 확인됐습니다.' : 'AI 서버는 준비돼 있습니다. 접근 코드를 입력하세요.'} 코드는 이 브라우저에만 저장됩니다.</p>
+<div class="url-row"><input type="password" id="ai-code" placeholder="접근 코드" value="${esc(aiCode.get())}" autocomplete="off">${btn('saveAiCode', '저장하고 확인', {}, 'primary')}${aiCode.get() ? btn('clearAiCode', '지우기', {}, 'quiet') : ''}</div>`)
+    : `<p class="hint">서버를 <code>ANTHROPIC_API_KEY=… python3 server.py</code> 로 실행하면 연결됩니다. 키는 서버 환경변수에만 둡니다.</p>`;
+  return `<div class="card"><h2 style="margin-top:0">AI 연결</h2><p>${state} · ${mode}</p>${how}
+<p class="hint">AI를 쓸 때는 그 기능에 필요한 내용(해당 경험·문장·공고)만 보냅니다. 연결이 없어도 각 기능의 <b>요청문 복사 → Claude(claude.ai)에 붙여넣기 → 답 붙여넣기</b>로 같은 결과를 반영할 수 있습니다.</p>
+<table class="t"><thead><tr><th>AI가 필요한 기능 (연결 시 모델 호출)</th><th>화면</th></tr></thead><tbody>${AI_FEATURES.map(([f, w]) => `<tr><td>${f}</td><td class="meta">${w}</td></tr>`).join('')}</tbody></table>
+<p><b>AI 없이 도는 기능 (규칙 — AI 분석이 아닙니다)</b></p><ul>${RULE_FEATURES.map(f => `<li>${f}</li>`).join('')}</ul></div>
+<div class="card"><h2 style="margin-top:0">웹 검색</h2><p><span class="badge off">연결 안 됨</span> 이 사이트는 웹을 검색하지 않습니다. 공고·회사 자료의 "URL에서 가져오기"는 <b>내가 준 주소의 페이지 하나를 읽는 것</b>이고 검색이 아닙니다. AI도 웹을 찾아보지 않고, 보낸 자료만 봅니다.</p></div>`;
+}
 V.backup = () => {
   const n = S.experiences.length, m = S.jobs.length, k = S.docs.length; const imp = UI.importData;
-  return `<div class="narrow"><h1>백업 · 데이터</h1>${storageNote()}
+  return `<div class="narrow"><h1>설정 · 백업</h1>${storageNote()}
 <div class="card"><h2 style="margin-top:0">JSON 백업</h2><p>현재: 경험 ${n}개 · 지원 회사 ${m}곳 · 문서 ${k}개</p>
 <div class="row">${btn('exportJson', '백업 파일 내려받기 (.json)', {}, 'primary')}<label class="btn">백업 파일에서 복원<input type="file" id="import-file" accept="application/json,.json" hidden></label></div>
 ${imp ? `<div class="note warn">복원할 파일: 경험 ${imp.experiences.length}개 · 지원 회사 ${imp.jobs.length}곳 · 문서 ${imp.docs.length}개${imp.exportedAt ? ` (백업 시각 ${fmt(imp.exportedAt)})` : ''}<br>복원하면 지금 브라우저의 데이터가 이 파일로 <b>대체</b>됩니다. 먼저 현재 데이터를 백업하세요.
 <div class="row">${btn('doImport', '복원', {}, 'danger')}${btn('cancelImport', '취소', {}, 'quiet')}</div></div>` : ''}
 ${UI.importErr ? `<p class="msg err">${esc(UI.importErr)}</p>` : ''}</div>
 <div class="card"><h2 style="margin-top:0">예시 데이터</h2><p class="hint">예시는 [예시] 표시가 붙은 가상 데이터입니다.</p><div class="row">${btn('loadSamples', '예시 불러오기')}${btn('clearSamples', '예시 모두 지우기', {}, 'quiet')}</div></div>
-<div class="card"><h2 style="margin-top:0">AI 연결 상태</h2><p>${HOSTED ? (AI.ok ? '[AI로 실행]은 내 Claude 계정 사용량으로 실행됩니다. 요청할 때 필요한 데이터만 보냅니다.' : 'AI를 쓸 수 없는 화면입니다. 요청문 복사 → 응답 붙여넣기로 진행하세요.') : !AI.server ? '로컬 서버 없이 열려 있습니다. URL 가져오기와 AI는 쓸 수 없고, 수동 흐름(요청문 복사 → 응답 붙여넣기)은 됩니다.' : AI.ok ? `서버에 AI가 연결돼 있습니다 (${esc(AI.model)}). 요청할 때 필요한 데이터만 보냅니다.` : 'AI 미연결. 서버를 <code>ANTHROPIC_API_KEY=… python3 server.py</code> 로 실행하면 연결됩니다. 키는 서버 환경변수에만 두고 브라우저에는 저장하지 않습니다.'}</p></div>
+${aiSettings()}
 <div class="card"><h2 style="margin-top:0">모든 데이터 지우기</h2><p class="hint">이 브라우저에 저장된 경험·공고·문서가 모두 삭제됩니다.</p>${confirmBtn('wipe', '전부 삭제', 'wipe', {})}</div></div>`;
 };
 
@@ -1161,7 +1283,15 @@ const A = {
   rerender() { },
   ask({ k }) { UI.confirm = k || null; },
   tab({ k, i }) { (UI.tabY[k] ??= [])[UI.tabs[k] || 0] = scrollY; UI.tabs[k] = +i; document.querySelectorAll(`[data-split="${k}"] > .pane`).forEach((p, n) => p.classList.toggle('on', n === +i)); document.querySelectorAll(`.tabs-m [data-a="tab"][data-k="${k}"]`).forEach((b, n) => b.classList.toggle('on', n === +i)); scrollTo(0, UI.tabY[k]?.[+i] || 0); return 'noRender'; },
-  newExp({ m }) { const e = newExpObj(); S.experiences.unshift(e); save(); go(`#/exp/${e.id}${m === 'q' ? '/q' : ''}`); return 'noRender'; },
+  newExp() { const e = newExpObj(); S.experiences.unshift(e); save(); go(`#/exp/${e.id}`); setTimeout(() => document.querySelector(`[data-b="exp:${e.id}:raw"]`)?.focus(), 50); return 'noRender'; },
+  storyUpd({ id, k }) { const e = exp(id); pushHistory(e, 'AI 수정 제안 적용 전'); setPath(e, HEAD.some(h => h[0] === k) ? k : 'f.' + k, e.story.upd[k]); if (unsupported(e.story.upd[k], [e.raw, ...e.story.qs.map(q => q.answer), val(e, k)].join('\n')).length) e.unknown[k] = true; delete e.story.upd[k]; e.updatedAt = nowIso(); save(); },
+  storyUpdSkip({ id, k }) { delete exp(id).story.upd[k]; save(); },
+  usePeriod({ id, p }) { const e = exp(id); e.period = p.replace(/\s*\([^)]*\)\s*$/, '').trim(); e.updatedAt = nowIso(); save(); },
+  rawToAction({ id }) { const e = exp(id); e.f.action = e.raw.trim(); e.updatedAt = nowIso(); save(); toast('「실행 내용」에 옮겼습니다. 오른쪽 전체 항목에서 다듬을 수 있습니다.'); },
+  bulletsRule({ id }) { const e = exp(id); e.bullets = { source: '규칙', at: nowIso(), items: [...lines(e.f.action).map(t => ['action', t]), ...lines(e.f.result).map(t => ['result', t])].map(([field, text]) => ({ id: uid(), text, field, basis: '', warn: '', use: true })) }; save(); },
+  putBullets({ id, t }) { const e = exp(id); if (t === 'resume' && !e.bullets?.items.some(it => it.use !== false && it.text.trim())) return toast('넣을 문장을 하나 이상 고르세요.'); const d = putBullets(e, t); if (t === 'resume') e.bullets.put = nowIso(); save(); toast(`기본 ${DOC_TYPES[t]}에 넣었습니다. 이전 상태는 버전으로 보관했습니다.`); if (t === 'career') { go(`#/doc/${d.id}`); return 'noRender'; } },
+  saveAiCode() { aiCode.set(($('#ai-code')?.value || '').trim()); return checkAI().then(() => toast(AI.ok ? 'AI가 연결됐습니다.' : AI.configured ? '접근 코드가 맞지 않습니다.' : 'AI 서버에 키가 아직 없습니다.')); },
+  clearAiCode() { aiCode.set(''); return checkAI(); },
   delExp({ id }) { S.experiences = S.experiences.filter(e => e.id !== id); UI.confirm = null; save(); toast('경험을 삭제했습니다. 관련 문서에는 알림이 표시됩니다.'); go('#/exp'); return 'noRender'; },
   applyDraft({ id, k }) { const e = exp(id); pushHistory(e, 'AI 정리 반영 전'); setPath(e, HEAD.some(h => h[0] === k) ? k : 'f.' + k, e.aiDraft.fields[k]); if (e.aiDraft.warn?.[k]) { e.unknown[k] = true; toast("원문에 없는 표현이 있어 '확인 필요'로 표시했습니다."); } e.updatedAt = nowIso(); save(); },
   applyDraftEmpty({ id }) { const e = exp(id); pushHistory(e, 'AI 정리 반영 전'); let n = 0; for (const [k, v] of Object.entries(e.aiDraft.fields)) if (!val(e, k).trim()) { setPath(e, HEAD.some(h => h[0] === k) ? k : 'f.' + k, v); if (e.aiDraft.warn?.[k]) e.unknown[k] = true; n++; } e.updatedAt = nowIso(); save(); toast(`빈 항목 ${n}개에 반영했습니다.`); },
@@ -1247,7 +1377,7 @@ const A = {
   reqRevise({ id, r }) { const d = doc(id), j = job(d.jobId), q = reqs(j).find(x => x.id === r); const ex = (j.mapping[r]?.expIds || []).map(exp).filter(Boolean).map(expName); d.revInstr = `이 공고의 "${q?.text}" 요건에 맞춰서. 근거는 연결한 경험(${ex.join(', ')})에 적힌 내용만 쓰고, 해보지 않은 일은 추가하지 말 것`; d.revReq = r; save(); toast('수정 요청을 채웠습니다. 아래 [수정안 받기]를 누르세요.'); },
   toggle({ k }) { UI.show[k] = !UI.show[k]; },
   selSent({ id, s }) { UI.sel[id] = s || null; UI.jump = s || null; },
-  draftPick({ id }) { const d = doc(id), j = job(d.jobId), E = realExps(j).filter(e => !d.groups.some(g => g.expId === e.id)); UI.dpick = { docId: id, sel: (j ? E.filter(e => linkScore(j, e.id) > 0) : E).map(e => e.id) }; },
+  draftPick({ id }) { const d = doc(id), j = job(d.jobId), E = realExps(j).filter(e => usable(e) && !d.groups.some(g => g.expId === e.id)); UI.dpick = { docId: id, sel: (j ? E.filter(e => linkScore(j, e.id) > 0) : E).map(e => e.id) }; },
   draftCancel() { UI.dpick = null; },
   draftGen({ id }) { const d = doc(id); if (!docEmpty(d)) saveVersion(d, `경험 추가 전 자동 보관 (${fmt(nowIso())})`); const n = addExpGroups(d, UI.dpick.sel); UI.dpick = null; UI.sel[id] = null; d.updatedAt = nowIso(); save(); toast(`경험 ${n}개로 초안을 만들었습니다. 오른쪽에서 보완할 문장을 확인하세요.`); },
   sentPropose({ id, s, k }) {
@@ -1279,7 +1409,7 @@ const A = {
   importPaste() { const t = $('#imp-text')?.value || ''; UI.impType = $('#imp-type')?.value; if (t.trim().length < 20) { UI.impMsg = { type: 'err', text: '붙여넣은 내용이 너무 짧습니다.' }; return; } UI.impMsg = null; UI.impPreview = { type: UI.impType, name: '붙여넣은 글', text: t, parsed: parseResume(t) }; },
   impConfirm() { const p = UI.impPreview; const d = makeMaster(p.type, p.parsed, { name: p.name, at: nowIso(), text: p.text }); UI.impPreview = null; UI.impMsg = null; save(); go(`#/doc/${d.id}`); return 'noRender'; },
   impCancel() { UI.impPreview = null; UI.impMsg = null; },
-  pickDoc({ id, t }) { const j = job(id); UI.pick = { jobId: id, type: t, sel: realExps(j).filter(e => linkScore(j, e.id) > 0).map(e => e.id) }; },
+  pickDoc({ id, t }) { const j = job(id); UI.pick = { jobId: id, type: t, sel: realExps(j).filter(e => usable(e) && linkScore(j, e.id) > 0).map(e => e.id) }; },
   cancelPick() { UI.pick = null; },
   genDoc() { const p = UI.pick; const d = makeDoc(p.jobId, p.type, S.experiences.filter(e => p.sel.includes(e.id)).map(e => e.id)); UI.pick = null; save(); go(`#/doc/${d.id}`); return 'noRender'; },
 
@@ -1377,11 +1507,13 @@ function target(kind, id) {
     case 'fact': return job(a)?.facts.find(x => x.id === b);
     case 'sent': return doc(a)?.sentences.find(x => x.id === b);
     case 'grp': return doc(a)?.groups.find(x => x.key === b);
+    case 'story': return exp(a)?.story?.qs.find(x => x.id === b);
+    case 'bul': return exp(a)?.bullets?.items.find(x => x.id === b);
   }
 }
 function touch(kind, id, path, o) {
   const a = id.split('|')[0]; const t = nowIso();
-  if (kind === 'exp') o.updatedAt = t;
+  if (kind === 'exp' || kind === 'story') exp(a).updatedAt = t;
   if (kind === 'job') { o.updatedAt = t; if (path === 'postingText') { o.postingAt = t; o.postingSource = o.postingSource?.startsWith('URL') ? (o.postingSource.includes('직접 수정') ? o.postingSource : o.postingSource + ' · 이후 직접 수정') : '직접 붙여넣기'; } }
   if (kind === 'map') { o.touched = true; job(a).updatedAt = t; }
   if (kind === 'src' && path === 'text') { o.at = t; o.origin = o.origin?.startsWith('URL') ? 'URL에서 가져온 뒤 직접 수정' : '직접 붙여넣기'; }
@@ -1502,7 +1634,7 @@ function readImport(file) {
 }
 
 // ───────── 라우터 ─────────
-function route() { const [name, id, sub] = location.hash.replace(/^#\/?/, '').split('/'); return { name: name || 'home', id, sub }; }
+function route() { const [name, id, sub] = location.hash.replace(/^#\/?/, '').split('#')[0].split('/'); return { name: name || 'home', id, sub }; }
 function render(top = false) {
   const r = route(); const y = scrollY;
   try { $('#main').innerHTML = (V[r.name] || V.home)(r) + (UI.saveFallback ? `<div class="card" id="save-fallback"><h2 style="margin-top:0">파일로 저장하지 못했습니다 — ${esc(UI.saveFallback.name)}</h2><p class="hint">이 화면에서는 파일 저장이 막혀 있습니다. 아래 내용을 모두 선택해 복사한 뒤 메모장 등에 붙여 저장하세요.</p><textarea rows="10" readonly>${esc(UI.saveFallback.text)}</textarea><div class="row">${btn('copyFallback', '전체 복사')}${btn('closeFallback', '닫기', {}, 'quiet')}</div></div>` : ''); }
@@ -1511,6 +1643,7 @@ function render(top = false) {
   document.querySelectorAll('#nav a').forEach(a => a.classList.toggle('on', a.dataset.r === navKey));
   scrollTo(0, top ? 0 : y);
   if (r.name === 'exp' && !r.id) filterExp();
+  const anchor = location.hash.split('#')[2]; if (anchor && top) document.getElementById(anchor)?.scrollIntoView({ block: 'start' });
   if (UI.jump) { document.querySelector(`.sent[data-sid="${UI.jump}"]`)?.scrollIntoView({ block: 'center' }); UI.jump = null; }
 }
 function takeJump() { const r = route(); if (r.name === 'doc' && r.sub) { UI.sel[r.id] = r.sub; UI.jump = r.sub; history.replaceState(null, '', '#/doc/' + r.id); } }
