@@ -123,6 +123,7 @@ const aiCode = { get() { try { return localStorage.getItem(KEY + '.aicode') || '
 async function api(path, body) {
   const web = HOSTED && !CLAUDE && (path === '/api/ai' || path === '/api/status');
   const url = path === '/api/fetch' ? FETCH_API : web ? AI_API : path;
+  if (CLAUDE && url === FETCH_API) return { ok: false, reason: 'Claude 주소에서는 다른 사이트를 불러올 수 없습니다. 웹사이트 주소(bberry0648-dotcom.github.io/job-prep-note)에서 불러오거나, 공고 본문을 복사해 붙여넣어 주세요.' };
   if (HOSTED && url === path) return { ok: false, reason: '배포된 사이트에는 서버 기능이 없습니다.' };
   try {
     const r = await fetch(url, { method: body ? 'POST' : 'GET', headers: { 'content-type': 'application/json', ...(web ? { 'x-access-code': aiCode.get() } : {}) }, body: body ? JSON.stringify(body) : undefined });
