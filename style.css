@@ -226,6 +226,30 @@ table.t th { font-size: 13px; color: var(--muted); font-weight: 600; }
 pre.code { background: var(--bg); padding: 10px 12px; border-radius: 10px; font-size: 13px; overflow-x: auto; }
 a.aist { color: inherit; } a.aist:hover { text-decoration: underline; }
 
+/* 단계형 경험 입력 · 대시보드 */
+.title-row { display: flex; align-items: center; gap: 8px; } .title-row h1 { flex: 1; min-width: 0; }
+.step { background: var(--surface); border-radius: 14px; margin: 0 0 10px; }
+.step.on { padding: 6px 20px 14px; box-shadow: inset 3px 0 0 var(--action); }
+.step h2 { margin: 12px 0 8px; font-size: 19px; }
+.step-h { all: unset; box-sizing: border-box; cursor: pointer; display: flex; gap: 10px; align-items: baseline; width: 100%; padding: 12px 20px; flex-wrap: wrap; }
+.step-h .meta { flex: 1; min-width: 8em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.step-h .go { color: var(--link); font-size: 14px; }
+.step-h:focus-visible { outline: 2px solid var(--action); border-radius: 14px; }
+.num { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--seg-bg); color: var(--sec); font-size: 13px; font-weight: 600; margin-right: 8px; }
+.step.on .num { background: var(--action); color: var(--on-action); }
+.split .pane .step { border-radius: 0; background: none; border-bottom: 1px solid var(--hairline); }
+.split .pane .step.on { box-shadow: none; padding: 0 0 12px; }
+.split .pane .step-h { padding: 12px 0; }
+.solo { max-width: 760px; }
+.wip { background: var(--surface); border-radius: 14px; padding: 8px 18px; margin: 12px 0; }
+.wip-list { list-style: none; padding: 0; margin: 4px 0; } .wip-list li { padding: 6px 0; border-bottom: 1px solid var(--hairline); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.clip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.btn.resume { flex-direction: column; align-items: flex-start; line-height: 1.25; } .btn.resume small { font-size: 12px; color: var(--muted); }
+.pick-t td { vertical-align: middle; } .pick-t tr.dim { opacity: .6; }
+.ctx.job { background: var(--similar-bg); border-radius: 10px; padding: 6px 10px; display: inline-block; }
+a.small { font-size: 13px; }
+.help { margin-top: 24px; }
+
 /* 인쇄용 화면 */
 .print-doc { background: var(--surface); max-width: 800px; margin: 0 auto; padding: 48px 56px; border-radius: 4px; font-size: 15px; line-height: 1.7; }
 .print-doc h1 { font-size: 26px; margin: 0 0 20px; }

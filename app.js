@@ -21,7 +21,7 @@ const QUESTIONS = {
   evidence: '결과를 확인할 수 있는 자료가 있나요? (보고서, 평가, 사진, 메시지, 결과물 링크 등)',
   learned: '이 경험으로 배운 점은 무엇인가요?'
 };
-const PH = { action: '예: 신규 파트너 4주 온보딩 체크리스트를 만들고 매주 1:1로 점검', result: '수치가 없으면 결과물·범위·피드백으로', evidence: '예: 본사 평가표, 매출 보고서 캡처, 고객 후기' };
+const PH = { action: '가상 예시: 신규 직원 4주 온보딩 체크리스트를 만들고 매주 1:1로 점검', result: '수치가 없으면 결과물·범위·피드백으로', evidence: '예: 본사 평가표, 매출 보고서 캡처, 고객 후기' };
 const LEVELS = { must: '제출 전 확인 필요', improve: '보완하면 설득력 향상', optional: '선택 사항' };
 const JOB_STATUS = ['관심', '공고 분석 중', '서류 작성 중', '제출 완료', '결과 대기', '종료'];
 const CATS = { duties: '주요 업무', required: '필수 자격요건', preferred: '우대사항', tools: '요구 도구·업무 지식', competencies: '반복해서 강조하는 역량', submission: '제출 서류·별도 작성 조건' };
@@ -188,7 +188,7 @@ asked: ${JSON.stringify(asked)}`;
       const qs = (e.story?.qs || []).map(q => q.status === 'open' ? { ...q, status: q.answer?.trim() ? 'done' : 'skipped' } : q);
       const seen = new Set(qs.map(q => norm(q.q)));
       for (const q of (Array.isArray(o.questions) ? o.questions : []).slice(0, 3)) if (q?.question && !seen.has(norm(q.question))) qs.push({ id: uid(), field: LABEL[q.field] ? q.field : '', q: String(q.question), answer: '', status: 'open' });
-      e.story = { source: 'AI', at: nowIso(), notes: String(o.notes || ''), qs, upd }; e.updatedAt = nowIso();
+      e.story = { source: 'AI', at: nowIso(), notes: String(o.notes || ''), qs, upd }; e.step = 2; e.updatedAt = nowIso();
       const nq = qs.filter(q => q.status === 'open').length;
       return `빈 항목 ${n}개를 채웠습니다${Object.keys(upd).length ? `, 이미 적힌 항목의 수정 제안 ${Object.keys(upd).length}개는 ②에서 확인하세요` : ''}. ${nq ? `추가 질문 ${nq}개` : '더 물을 질문 없음'}. 원문에 없는 수치·표현이 든 항목은 '확인 필요'로 표시했습니다.`;
     }
@@ -572,7 +572,7 @@ function careerTitle(g) {
   return [g.company, g.role, per && per + (t ? ` (${t})` : '')].map(x => (x || '').trim()).filter(Boolean).join(' · ');
 }
 const hasCF = g => CAREER_F.some(k => g[k]);
-const gTitle = g => hasCF(g) ? careerTitle(g) : g.title; // 재직중 근속기간이 매달 늘어나도록 출력 때 다시 계산
+const gTitle = g => g.expId && exp(g.expId) ? groupTitle(exp(g.expId)) : hasCF(g) ? careerTitle(g) : g.title; // 재직중 근속기간이 매달 늘어나도록 출력 때 다시 계산
 // "회사 | 직책 | 2022.07 - 2025.11" 같은 줄에서 경력 칸을 채운다. 기간이 없으면 false
 const PERIOD = /(\d{4}\s*[.\-/년]\s*\d{1,2})\s*월?\s*[-–~]\s*(\d{4}\s*[.\-/년]\s*\d{1,2}\s*월?|재직\s*중|현재|진행\s*중)(\s*\([^)]*\))?/;
 function careerFields(g, line) {
@@ -669,7 +669,6 @@ function preCheck(d) {
   for (const g of d.groups) {
     if (!g.expId) continue; const e = exp(g.expId);
     if (!e) out.push(['must', `원본 경험이 삭제됨: ${g.title}`]);
-    else if (e.period && !g.title.includes(e.period)) out.push(['must', `기간 불일치 — 문서: "${g.title}" / 원본: "${e.period}"`]);
   }
   for (const s of d.sentences.filter(s => !s.unverified && s.text.trim())) {
     const nums = s.text.match(NUM_RE);
@@ -729,7 +728,7 @@ const inp = (b, v, ph = '', type = 'text', rr = false) => `<input type="${type}"
 const sel = (b, v, opts, rr = true) => `<select data-b="${esc(b)}" ${rr ? 'data-rr' : ''}>${opts.map(([k, l]) => `<option value="${esc(k)}" ${k === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
 const chk = (b, v, label, rr = false) => `<label class="chk"><input type="checkbox" data-b="${esc(b)}" ${v ? 'checked' : ''} ${rr ? 'data-rr' : ''}> ${label}</label>`;
 const badge = (t, cls = '') => `<span class="badge ${cls}">${esc(t)}</span>`;
-const sampleB = o => o?.sample ? badge('예시', 'sample') : '';
+const sampleB = o => o?.sample ? badge('가상 예시', 'sample') : '';
 function split(key, a, b) {
   const cur = UI.tabs[key] || 0;
   return `<div class="tabs-m no-print">${[a, b].map((p, i) => `<button type="button" data-a="tab" data-k="${key}" data-i="${i}" class="${cur === i ? 'on' : ''}">${p.label}</button>`).join('')}</div>
@@ -739,7 +738,8 @@ function confirmBtn(key, label, action, data) {
   if (UI.confirm !== key) return btn('ask', label, { k: key }, 'danger');
   return `<span class="row" style="margin:0"><span class="muted">정말 ${label}할까요? 되돌릴 수 없습니다.</span>${btn(action, label, data, 'danger')}${btn('ask', '취소', { k: '' }, 'quiet')}</span>`;
 }
-const storageNote = () => HOSTED ? `<div class="note">이 사이트의 데이터는 <b>지금 이 브라우저(또는 앱)에만</b> 저장됩니다. 휴대폰·다른 브라우저에서 열면 비어 있고, 브라우저 데이터를 지우면 사라집니다. 다른 주소(Claude 아티팩트·내 컴퓨터 127.0.0.1)에서 쓰던 내용은 그쪽 <a href="#/backup">백업</a>에서 파일로 받은 뒤 여기 백업 화면에서 복원하세요.</div>` : `<div class="note">이 사이트의 데이터는 <b>지금 이 기기·이 브라우저에만</b> 저장됩니다. 다른 기기·다른 브라우저에서는 보이지 않고, 브라우저 데이터(방문 기록·사이트 데이터)를 지우면 사라집니다. <a href="#/backup">JSON 백업</a>을 주기적으로 받아두세요. 주소도 항상 같게 여세요(지금 주소: <b>${esc(location.host)}</b>) — localhost와 127.0.0.1, 포트 번호가 다르면 다른 저장공간입니다.</div>`;
+const storageNote = () => `<div class="note">데이터는 <b>이 브라우저에만</b> 저장됩니다. <a href="#/backup">백업</a>을 가끔 받아 두세요.<details><summary>자세히</summary>${storageMore()}</details></div>`;
+const storageMore = () => HOSTED ? `<p class="hint">이 사이트의 데이터는 <b>지금 이 브라우저(또는 앱)에만</b> 저장됩니다. 휴대폰·다른 브라우저에서 열면 비어 있고, 브라우저 데이터를 지우면 사라집니다. 다른 주소(Claude 아티팩트·내 컴퓨터 127.0.0.1)에서 쓰던 내용은 그쪽 <a href="#/backup">백업</a>에서 파일로 받은 뒤 여기 백업 화면에서 복원하세요.</p>` : `<p class="hint">이 사이트의 데이터는 <b>지금 이 기기·이 브라우저에만</b> 저장됩니다. 다른 기기·다른 브라우저에서는 보이지 않고, 브라우저 데이터(방문 기록·사이트 데이터)를 지우면 사라집니다. <a href="#/backup">JSON 백업</a>을 주기적으로 받아두세요. 주소도 항상 같게 여세요(지금 주소: <b>${esc(location.host)}</b>) — localhost와 127.0.0.1, 포트 번호가 다르면 다른 저장공간입니다.</p>`;
 const notFound = () => `<div class="card"><p>찾을 수 없습니다. 삭제되었거나 다른 브라우저의 데이터일 수 있습니다.</p><a href="#/">대시보드로</a></div>`;
 const openCount = (e, lv) => e.feedback.filter(x => x.status === 'open' && (!lv || x.level === lv)).length;
 
@@ -749,36 +749,33 @@ const V = {};
 V.home = () => {
   const E = S.experiences, J = S.jobs, M = S.docs.filter(isMaster);
   const mr = M.find(d => d.type === 'resume');
-  const U = E.filter(usable), W = E.filter(e => hasText(e) && !usable(e));
-  const actions = `<div class="hero-actions">${btn('newExp', '경험 이야기하기', {}, 'primary lg')}${mr ? `<a class="btn lg" href="#/doc/${mr.id}">기본 이력서 열기</a>` : ''}${btn('newJob', '＋ 지원 공고 추가', {}, 'lg')}</div>`;
-  const side = `<p class="hint">이미 이력서가 있다면: <a href="#/docs">가지고 있는 이력서 불러오기</a> · ${mr ? '' : `${btn('newMaster', '빈 양식에 직접 쓰기', { t: 'resume' }, 'link')}`}</p>`;
-  const next = !U.length ? (W.length ? `작성 중인 경험 ${W.length}개에 「실행 내용」이나 「결과」를 채우면 이력서 초안에 쓸 수 있습니다. <a href="#/exp/${W[0].id}">이어 쓰기 →</a>` : '기억나는 일 하나를 이야기하는 것부터 시작하세요. 질문에 답하면 이력서 문장까지 이어집니다.')
-    : !mr ? `초안에 쓸 수 있는 경험 ${U.length}개 — ${btn('newMaster', '기본 이력서 만들기', { t: 'resume' }, 'link')}` : !J.length ? '기본 이력서가 있습니다. 지원할 공고를 추가하면 공고에 맞춰 고칠 수 있습니다.' : '';
+  // 이력서에 쓸 수 있는 경험 = 회사명 + 실행 내용·결과. 나머지(빈 경험 포함)는 '작성 중'으로 접어 둔다
+  const ready = E.filter(e => usable(e) && e.org?.trim()), wip = E.filter(e => !ready.includes(e)), W = wip.filter(hasText);
+  // 최근 작업: 경험·문서·지원 회사 중 가장 최근에 고친 것
+  const last = [...E.filter(hasText).map(e => ({ t: e.updatedAt, label: `경험 · ${expTitle(e)}`, href: `#/exp/${e.id}` })),
+    ...S.docs.map(d => ({ t: d.updatedAt, label: `${isMaster(d) ? '공통' : '회사별'} ${DOC_TYPES[d.type]} · ${d.title}`, href: `#/doc/${d.id}` })),
+    ...J.map(j => ({ t: j.updatedAt, label: `지원 회사 · ${j.company || '회사명 미입력'}`, href: `#/job/${j.id}` }))].sort((a, b) => b.t.localeCompare(a.t))[0];
+  const actions = `<div class="hero-actions">${btn('newExp', '＋ 경험 추가하기', {}, 'primary lg')}${last ? `<a class="btn lg resume" href="${last.href}">최근 작업 이어하기 <small>${esc(last.label.slice(0, 32))}</small></a>` : ''}</div>`;
+  const next = !ready.length ? (W.length ? `작성 중인 경험을 마저 채우면 이력서에 넣을 수 있습니다. <a href="#/exp/${W[0].id}">「${esc(expTitle(W[0]))}」 이어 쓰기 →</a>` : '')
+    : !mr ? `이력서에 쓸 수 있는 경험 ${ready.length}개 — ${btn('newMaster', '기본 이력서 만들기', { t: 'resume' }, 'link')}`
+    : !J.length ? `기본 이력서가 준비됐습니다. ${btn('newJob', '지원 공고 추가하기', {}, 'link')}` : '';
   if (!E.length && !J.length && !S.docs.length) return `<div class="onboard"><h1>취업 준비 노트</h1>
-<p class="lead">기억나는 일을 이야기하면, 부족한 부분을 질문으로 채워 이력서 문장까지 만듭니다.</p>${actions}
-<ol class="steps"><li><b>경험 이야기하기</b> — 회사명·기간을 몰라도 됩니다. 있었던 일을 생각나는 대로 적습니다.</li>
-<li><b>추가 질문에 답하기</b> — 이력서에 필요한데 빠진 것만 1~3개씩 묻습니다. 답한 건 다시 묻지 않습니다.</li>
-<li><b>기본 이력서·경력기술서 만들기</b> — 정리된 경험에서 문장을 제안받아 확인하고 넣습니다.</li>
-<li><b>공고별로 고치기</b> — 공고 URL을 붙여넣고, 요구사항과 연결된 경험을 근거로 회사별 문서를 고칩니다. 기본 문서와 경험 원본은 그대로 남습니다.</li></ol>
-${side}<p class="hint">${btn('loadSamples', '예시 데이터 보기', {}, 'link')}</p>${storageNote()}</div>`;
-  const recent = [...E].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 6);
-  const todo = E.flatMap(e => e.feedback.filter(x => x.status === 'open').map(x => ({ e, x }))).sort((a, b) => ['must', 'improve', 'optional'].indexOf(a.x.level) - ['must', 'improve', 'optional'].indexOf(b.x.level));
-  const unchecked = E.filter(e => !e.fbAt);
-  return `<h1>대시보드</h1>${actions}${next ? `<p class="note">${next}</p>` : ''}${side}${storageNote()}
-<h2>기본 문서 <span class="meta">${M.length}개</span></h2>
-${M.length ? `<div class="cards">${M.map(d => `<div class="card"><a href="#/doc/${d.id}"><b>${esc(d.title)}</b></a> ${badge(DOC_TYPES[d.type])}<p class="meta">채운 문장 ${d.sentences.filter(x => x.text.trim()).length}개 · 공고용 복사본 ${S.docs.filter(x => x.basedOn === d.id).length}개 · 수정 ${fmt(d.updatedAt)}</p></div>`).join('')}</div>` : `<p class="hint">아직 기본 문서가 없습니다. <a href="#/docs">이력서·경력기술서</a>에서 시작하세요.</p>`}
-<h2>경험 <span class="meta">초안에 쓸 수 있음 ${U.length} · 작성 중 ${W.length}${E.length - U.length - W.length ? ` · 비어 있음 ${E.length - U.length - W.length}` : ''}</span></h2>
-${recent.length ? `<div class="cards">${recent.map(e => { const empty = ALL.filter(([k]) => !val(e, k).trim()).length; const unk = Object.values(e.unknown || {}).filter(Boolean).length; return `<div class="card"><a href="#/exp/${e.id}"><b>${esc(e.org || (e.raw?.trim() ? e.raw.trim().slice(0, 24) + '…' : '새 경험'))}</b></a> ${sampleB(e)} ${badge(...expState(e))}<p class="meta">${esc(e.period || '기간 미입력')} · 빈 항목 ${empty}개${unk ? ` · 확인 필요 ${unk}개` : ''}</p><p class="meta">수정 ${fmt(e.updatedAt)}</p></div>`; }).join('')}</div>` : `<p class="hint">아직 경험이 없습니다.</p>`}
-<h2>보완할 항목</h2>
-${todo.length || unchecked.length ? `<div class="card">
-${['must', 'improve', 'optional'].map(lv => `${badge(LEVELS[lv] + ' ' + todo.filter(t => t.x.level === lv).length, lv)}`).join(' ')}
-${unchecked.length ? `<p class="hint">아직 피드백을 돌리지 않은 경험 ${unchecked.length}개: ${unchecked.map(e => `<a href="#/fb/${e.id}">${esc(expName(e))}</a>`).join(', ')}</p>` : ''}
-<ul>${todo.filter(t => t.x.level !== 'optional').slice(0, 8).map(({ e, x }) => `<li>${badge(LEVELS[x.level], x.level)} <a href="#/fb/${e.id}">${esc(expName(e))}</a> — ${esc(x.issue)}</li>`).join('')}</ul></div>` : `<p class="hint">남은 보완 항목이 없습니다.</p>`}
-<h2>지원 회사별 진행 상태 <span class="meta">${J.length}곳</span></h2>
-${J.length ? `<div class="card" style="overflow-x:auto"><table class="t"><thead><tr><th>회사 · 직무</th><th>상태</th><th>마감</th><th>공고 분석</th><th>필수요건 미확인</th><th>문서</th><th>원본 변경 알림</th></tr></thead><tbody>
-${J.map(j => { const R = reqs(j); const reqUnk = R.filter(r => r.cat === 'required' && (j.mapping[r.id]?.status || 'unknown') === 'unknown').length; const D = S.docs.filter(d => d.jobId === j.id); const st = D.reduce((n, d) => n + staleExps(d).length, 0);
-  return `<tr><td><a href="#/job/${j.id}">${esc(j.company || '회사명 미입력')}</a> ${sampleB(j)}<br><span class="meta">${esc(j.position)}</span></td><td>${esc(j.status)}</td><td>${esc(j.deadline || '-')} <span class="meta">${dday(j.deadline)}</span></td><td>${!j.analysis ? '<span class="muted">안 함</span>' : reqs(j).length ? `${esc(j.analysis.source)}` : badge('추출 0개 — 확인 필요', 'must')}</td><td>${j.analysis ? reqUnk : '-'}</td><td>${D.length}</td><td>${st ? badge(st + '건', 'improve') : '-'}</td></tr>`; }).join('')}
-</tbody></table></div>` : `<p class="hint">아직 지원 공고가 없습니다.</p>`}`;
+<p class="lead">기억나는 일을 이야기하면, 질문으로 채워 이력서 문장까지 만듭니다.</p>${actions}
+<ol class="steps"><li>경험 이야기하기</li><li>내용 보완하기 — 빠진 것만 1~3개씩 질문</li><li>기본 이력서·경력기술서 만들기</li><li>공고별로 고치기</li></ol>
+<details><summary>도움말</summary><p class="hint">회사명·기간은 몰라도 시작할 수 있습니다. 공고별 문서를 고쳐도 기본 문서와 경험 원본은 바뀌지 않습니다. 이미 이력서가 있다면 <a href="#/docs">파일로 불러오기</a>도 됩니다. ${btn('loadSamples', '가상 예시 데이터 보기', {}, 'link')}</p>${storageNote()}</details></div>`;
+  const todo = ready.flatMap(e => e.feedback.filter(x => x.status === 'open' && x.level !== 'optional').map(x => ({ e, x }))).sort((a, b) => ['must', 'improve'].indexOf(a.x.level) - ['must', 'improve'].indexOf(b.x.level));
+  return `<h1>대시보드</h1>${actions}${next ? `<p class="note">${next}</p>` : ''}
+${J.length ? `<h2>지원 회사 <span class="meta">${J.length}곳</span></h2><div class="card" style="overflow-x:auto"><table class="t"><thead><tr><th>회사 · 직무</th><th>상태</th><th>마감</th><th>문서</th><th>알림</th></tr></thead><tbody>
+${J.map(j => { const D = S.docs.filter(d => d.jobId === j.id), st = D.reduce((n, d) => n + staleExps(d).length, 0);
+  return `<tr><td><a href="#/job/${j.id}">${esc(j.company || '회사명 미입력')}</a> ${sampleB(j)}<br><span class="meta">${esc(j.position)}</span></td><td>${esc(j.status)}</td><td>${esc(j.deadline || '-')} <span class="meta">${dday(j.deadline)}</span></td><td>${D.length ? D.map(d => `<a href="#/doc/${d.id}">${DOC_TYPES[d.type]}</a>`).join(' · ') : `<a href="#/job/${j.id}/docs">만들기</a>`}</td><td>${!j.analysis ? '<span class="meta">공고 분석 전</span>' : st ? badge('원본 경험 변경 ' + st, 'improve') : '-'}</td></tr>`; }).join('')}
+</tbody></table></div>` : ''}
+<h2>공통 문서 <span class="meta">${M.length}개</span></h2>
+${M.length ? `<div class="cards">${M.map(d => `<div class="card"><a href="#/doc/${d.id}"><b>${esc(d.title)}</b></a> ${badge(DOC_TYPES[d.type])}<p class="meta">문장 ${d.sentences.filter(x => x.text.trim()).length}개 · 회사별 복사본 ${S.docs.filter(x => x.basedOn === d.id).length}개 · 수정 ${fmt(d.updatedAt)}</p></div>`).join('')}</div>` : `<p class="hint">아직 없습니다. 경험을 채운 뒤 만들거나 <a href="#/docs">가지고 있는 이력서를 불러오세요</a>.</p>`}
+<h2>경험 <span class="meta">이력서에 쓸 수 있음 ${ready.length}</span></h2>
+${ready.length ? `<div class="cards">${ready.slice(0, 6).map(e => `<div class="card"><a href="#/exp/${e.id}"><b>${esc(expTitle(e))}</b></a> ${sampleB(e)}<p class="meta">${esc([e.position, e.period].filter(Boolean).join(' · ') || '기간 미입력')}</p><p class="meta clip">${esc(lines(e.f?.action || e.f?.result)[0] || '')}</p></div>`).join('')}</div>${ready.length > 6 ? `<p><a href="#/exp">전체 ${ready.length}개 보기 →</a></p>` : ''}` : ''}
+${wip.length ? `<details class="wip"><summary>작성 중 ${wip.length}개 <span class="meta">빈 경험 · 회사명이나 실행 내용이 빠진 경험</span></summary><ul class="wip-list">${wip.map(e => `<li><a href="#/exp/${e.id}">${esc(expTitle(e))}</a> <span class="meta">${hasText(e) ? (e.org ? '실행 내용·결과 필요' : '회사명 필요') : '비어 있음'}</span></li>`).join('')}</ul></details>` : ''}
+${todo.length ? `<h2>보완할 항목 <span class="meta">${todo.length}개</span></h2><ul class="issues">${todo.slice(0, 6).map(({ e, x }) => `<li>${badge(LEVELS[x.level], x.level)} <a href="#/fb/${e.id}">${esc(expTitle(e))}</a> — ${esc(x.issue)}</li>`).join('')}</ul>` : ''}
+<details class="help"><summary>데이터 저장 안내</summary>${storageNote()}</details>`;
 };
 
 // 경험 상태: 비어 있음 → 작성 중 → 초안에 쓸 수 있음(주요 업무·결과 중 하나라도 있음)
@@ -788,85 +785,95 @@ const expState = e => usable(e) ? ['초안에 쓸 수 있음', 'ok'] : hasText(e
 // 규칙 질문 순서: 이력서 한 줄에 꼭 필요한 것부터
 const Q_ORDER = ['org', 'position', 'period', 'action', 'result', 'myRole', 'situation', 'problem', 'evidence', 'reason', 'collab', 'learned'];
 
+// 경험 작성 단계: 경험마다 저장해 두어(e.step) 새로고침·화면 이동 뒤에도 같은 단계로 돌아온다
+const stepOf = e => e.step || (!hasText(e) ? 1 : !usable(e) ? 2 : 3);
+const expTitle = e => e.org || (e.raw?.trim() ? e.raw.trim().slice(0, 24) + '…' : '새 경험');
+const more = (key, items) => `<details class="more" ${UI.confirm && key && UI.confirm.startsWith(key) ? 'open' : ''}><summary aria-label="더보기">⋯</summary><div class="menu">${items}</div></details>`;
+
 V.exp = r => {
   if (!r.id) {
-    const E = S.experiences, U = E.filter(usable).length, D = E.filter(e => hasText(e) && !usable(e)).length;
-    return `<h1>경험 보관함</h1><p class="hint">초안에 쓸 수 있음 ${U}개 · 작성 중 ${D}개 · 비어 있음 ${E.length - U - D}개 — 주요 업무나 결과가 채워진 경험만 이력서 초안에 들어갑니다.</p>
-<div class="row">${btn('newExp', '＋ 경험 이야기하기', {}, 'primary')}</div>
-<div class="row"><input type="search" id="exp-q" placeholder="회사·활동명, 내용 검색" style="max-width:360px">
-<select id="exp-kind"><option value="">전체 종류</option><option>회사</option><option>프로젝트·활동</option></select>
-<select id="exp-state"><option value="">전체 상태</option><option value="must">제출 전 확인 필요 있음</option><option value="unchecked">피드백 안 돌림</option><option value="sample">예시만</option><option value="real">내 데이터만</option></select></div>
-${E.length ? `<div class="cards" id="exp-cards">${E.map(e => { const [st, c] = expState(e); return `<div class="card" data-text="${esc([e.org, e.position, e.period, e.raw, ...Object.values(e.f || {})].join(' ').toLowerCase())}" data-kind="${esc(e.kind)}" data-must="${openCount(e, 'must') ? 1 : 0}" data-unchecked="${e.fbAt ? 0 : 1}" data-sample="${e.sample ? 1 : 0}">
-<a href="#/exp/${e.id}"><b>${esc(e.org || (e.raw?.trim() ? e.raw.trim().slice(0, 24) + '…' : '새 경험'))}</b></a> ${sampleB(e)} ${badge(st, c)}
-<p class="meta">${esc([e.position, e.period].filter(Boolean).join(' · ') || '회사·기간 미입력')}</p>
-<div class="row"><a class="btn" href="#/exp/${e.id}">${hasText(e) ? '이어 쓰기' : '쓰기'}</a>${hasText(e) ? '' : confirmBtn('del-exp-' + e.id, '삭제', 'delExp', { id: e.id })}</div></div>`; }).join('')}</div><p class="hint" id="exp-none" hidden>조건에 맞는 경험이 없습니다.</p>`
-    : `<div class="card"><p>아직 경험이 없습니다. 기억나는 일 하나를 적는 것부터 시작하세요.</p>${btn('newExp', '＋ 경험 이야기하기', {}, 'primary')}</div>`}`;
+    const E = S.experiences, ready = E.filter(e => usable(e) && e.org?.trim()), wip = E.filter(e => !ready.includes(e));
+    const card = e => { const [st, c] = expState(e); return `<div class="card" data-text="${esc([e.org, e.position, e.period, e.raw, ...Object.values(e.f || {})].join(' ').toLowerCase())}" data-kind="${esc(e.kind)}" data-must="${openCount(e, 'must') ? 1 : 0}" data-unchecked="${e.fbAt ? 0 : 1}" data-sample="${e.sample ? 1 : 0}">
+<a href="#/exp/${e.id}"><b>${esc(expTitle(e))}</b></a> ${sampleB(e)} ${badge(st, c)}
+<p class="meta">${esc([e.position, e.period].filter(Boolean).join(' · ') || '회사·기간 미입력')}</p>${e.f?.action ? `<p class="meta clip">${esc(lines(e.f.action)[0])}</p>` : ''}</div>`; };
+    return `<h1>경험 보관함</h1>
+<div class="row">${btn('newExp', '＋ 경험 추가하기', {}, 'primary')}<input type="search" id="exp-q" placeholder="검색" style="max-width:260px"><select id="exp-kind"><option value="">전체 종류</option><option>회사</option><option>프로젝트·활동</option></select><select id="exp-state"><option value="">전체 상태</option><option value="must">제출 전 확인 필요 있음</option><option value="sample">가상 예시만</option><option value="real">내 데이터만</option></select></div>
+${ready.length ? `<div class="cards" id="exp-cards">${ready.map(card).join('')}</div><p class="hint" id="exp-none" hidden>조건에 맞는 경험이 없습니다.</p>` : `<p class="hint">이력서에 쓸 수 있는 경험이 아직 없습니다. 회사명과 실행 내용·결과가 채워지면 여기 나옵니다.</p>`}
+${wip.length ? `<details class="wip" ${ready.length ? '' : 'open'}><summary>작성 중 ${wip.length}개 <span class="meta">빈 경험 · 회사명이나 실행 내용이 빠진 경험</span></summary>
+<ul class="wip-list">${wip.map(e => `<li><a href="#/exp/${e.id}">${esc(expTitle(e))}</a> <span class="meta">${hasText(e) ? (e.org ? '실행 내용·결과 필요' : '회사명 필요') : '비어 있음'}</span> ${hasText(e) ? '' : more('del-exp-' + e.id, confirmBtn('del-exp-' + e.id, '삭제', 'delExp', { id: e.id }))}</li>`).join('')}</ul></details>` : ''}`;
   }
   const e = exp(r.id); if (!e) return notFound();
-  const [st, stc] = expState(e);
+  if (!e.step) { e.step = stepOf(e); save(); } // 처음 연 단계를 고정 — 이후엔 사용자가 누를 때만 움직인다
+  const [st, stc] = expState(e), cur = stepOf(e), filled = ALL.filter(([k]) => val(e, k).trim()).length;
+  const open = (e.story?.qs || []).filter(q => q.status === 'open').length;
+  const steps = [
+    [1, '이야기하기', e.raw?.trim() ? `“${esc(e.raw.trim().slice(0, 40))}${e.raw.trim().length > 40 ? '…' : ''}”` : '아직 적지 않음', step1],
+    [2, '내용 보완하기', `항목 ${filled}/${ALL.length}${open ? ` · 답할 질문 ${open}개` : ''}`, step2],
+    [3, '이력서 문장', e.bullets?.put ? '기본 이력서에 넣음' : usable(e) ? '만들 수 있음' : '실행 내용·결과가 필요', step3]];
+  const body = steps.map(([n, t, sum, f]) => n === cur
+    ? `<section class="step on" id="s${n}"><h2><span class="num">${n}</span>${t}</h2>${f(e)}</section>`
+    : `<section class="step" id="s${n}"><button type="button" class="step-h" data-a="expStep" data-id="${e.id}" data-s="${n}"><span class="num">${n}</span><b>${t}</b><span class="meta">${sum}</span><span class="go">${n < cur ? '돌아가기' : '열기'}</span></button></section>`).join('');
   const head = `<div class="page-head"><a class="back" href="#/exp">← 경험 보관함</a>
-<h1>${esc(e.org || '새 경험')} ${sampleB(e)} ${badge(st, stc)}</h1>
-<ol class="flow"><li class="${hasText(e) ? 'done' : 'on'}"><a href="#/exp/${e.id}#s1">이야기하기</a></li><li class="${usable(e) ? 'done' : hasText(e) ? 'on' : ''}"><a href="#/exp/${e.id}#s2">질문에 답하기</a></li><li class="${e.bullets?.put ? 'done' : usable(e) ? 'on' : ''}"><a href="#/exp/${e.id}#s3">이력서 문장</a></li></ol></div>`;
-  return head + split('exp', { label: '작성', html: storyPane(e) }, { label: '정리된 항목', html: summaryPane(e) });
+<div class="title-row"><h1>${esc(expTitle(e))} ${sampleB(e)} ${badge(st, stc)}</h1>${more('del-exp-' + e.id, `<a href="#/fb/${e.id}">규칙 점검·AI 피드백</a>${confirmBtn('del-exp-' + e.id, '경험 삭제', 'delExp', { id: e.id })}`)}</div></div>`;
+  // 정리된 내용이 없으면 오른쪽 요약을 두지 않는다
+  return head + (filled ? split('exp', { label: '작성', html: body }, { label: `정리된 항목 ${filled}`, html: summaryPane(e) }) : `<div class="solo">${body}</div>`);
 };
 function aiLine(e) {
-  return AI.ok ? `<p class="meta">AI 연결됨 (${esc(AI.model)}) — 누르면 내 글과 답변만 보냅니다.</p>`
-    : e.story?.source === 'AI' ? `<p class="meta">AI 미연결 — 아래 질문은 Claude 답을 붙여넣어 받은 것입니다. 답한 뒤 요청문을 다시 복사해 붙여넣으면 다음 질문을 받습니다. <a href="#/backup">AI 연결 설정</a></p>`
-    : `<p class="meta">AI 미연결 — 아래 질문은 <b>규칙</b>으로 만듭니다(글 내용을 읽고 만든 질문이 아님). <a href="#/backup">AI 연결 설정</a></p>`;
+  return AI.ok ? `<p class="meta">AI 연결됨 (${esc(AI.model)}) — 내 글과 답변만 보냅니다.</p>`
+    : e.story?.source === 'AI' ? `<p class="meta">AI 미연결 — 지금 질문은 Claude 답을 붙여넣어 받은 것입니다.</p>`
+    : `<p class="meta">AI 미연결 — 다음 단계 질문은 <b>규칙</b>으로 만듭니다(글을 읽고 만든 질문이 아님). <a href="#/backup">연결 설정</a></p>`;
 }
-function storyPane(e) {
-  const s = e.story, aiQs = s?.source === 'AI', open = aiQs ? s.qs.filter(q => q.status === 'open') : [], done = aiQs ? s.qs.filter(q => q.status !== 'open') : [];
-  const upd = Object.entries(s?.upd || {});
-  const per = !e.period?.trim() && e.raw?.match(PERIOD)?.[0];
-  return `<section id="s1"><h2>① 기억나는 일을 자유롭게</h2>
-<p class="hint">회사명·기간을 몰라도 됩니다. 어떤 일이 있었고, 내가 무엇을 했고, 어떻게 됐는지 생각나는 대로 적으세요.</p>
-${ta(`exp:${e.id}:raw`, e.raw, 7, '예: 룰루레몬에서 키리더로 일할 때 근처 회사에서 단체 주문 문의가 자주 왔다. 내가 담당해서 목적·예산을 묻고 제품을 추천하는 방식을 만들었고, 주문 절차도 정리했다.')}
+function step1(e) {
+  return `<p class="hint">회사명·기간은 몰라도 됩니다. 있었던 일, 내가 한 일, 어떻게 됐는지를 생각나는 대로.</p>
+${ta(`exp:${e.id}:raw`, e.raw, 6, '가상 예시: 카페에서 일할 때 주말마다 주문 줄이 길었다. 주문 받는 사람과 음료 만드는 사람을 나누자고 제안해서 바꿨다.')}
 ${aiLine(e)}
-${AI.ok ? `<div class="row">${btn('aiRun', UI.busy['story:' + e.id] ? '정리하는 중…' : aiQs ? '다시 정리하고 질문 받기' : '정리하고 질문 받기', { t: 'story', c: e.id }, 'primary', !!UI.busy['story:' + e.id] || !e.raw?.trim())}</div>${UI.aiMsg['story:' + e.id] ? `<p class="msg ${UI.aiMsg['story:' + e.id].type}">${esc(UI.aiMsg['story:' + e.id].text)}</p>` : ''}`
-    : `<details><summary>AI 없이 Claude에 직접 물어보기 (요청문 복사 → 답 붙여넣기)</summary>${aiPanel('story', e.id, '글 정리 + 추가 질문', '내 글과 답변만 요청문에 담깁니다. Claude(claude.ai)에 붙여넣고 받은 답을 붙여넣으면 AI로 정리한 것과 같게 반영됩니다.')}</details>`}</section>
-<section id="s2"><h2>② 추가 질문</h2>
-${aiQs ? `<p class="hint">AI가 글에서 부족한 부분만 골라 물은 질문입니다 ${s.at ? `(${fmt(s.at)})` : ''}. 모르면 "모름"이라고 적으세요.</p>
-${open.length ? open.map(q => `<div class="fb optional"><p><b>${esc(q.q)}</b> <span class="meta">${esc(LABEL[q.field] || '')}</span></p>${ta(`story:${e.id}|${q.id}:answer`, q.answer, 2, '답변')}</div>`).join('') + `<div class="row">${AI.ok ? btn('aiRun', UI.busy['story:' + e.id] ? '반영하는 중…' : '답변 반영하고 다음 질문', { t: 'story', c: e.id }, 'primary', !!UI.busy['story:' + e.id]) : '<span class="meta">답한 뒤 위 「Claude에 직접 물어보기」에서 요청문을 다시 복사해 붙여넣으세요.</span>'}</div>`
-      : `<p class="msg ok">지금 더 물을 질문이 없습니다. ③으로 넘어가세요.</p>`}
-${done.length ? `<details><summary>답한 질문 ${done.length}개 (다시 묻지 않음)</summary><ul>${done.map(q => `<li>${esc(q.q)}<br><span class="meta">답: ${esc(q.answer || '—')}</span></li>`).join('')}</ul></details>` : ''}
-${s.notes ? `<p class="meta">AI 메모: ${esc(s.notes)}</p>` : ''}
-${upd.length ? `<div class="proposal"><h4>답변을 반영해 바뀐 항목 <span class="meta">이미 채워진 칸은 확인 후에만 바꿉니다</span></h4>${upd.map(([k, v]) => `<div class="cmp"><div><span>지금 「${esc(LABEL[k])}」</span><div class="before">${esc(val(e, k))}</div></div><div><span>AI 제안</span><div class="after">${esc(v)}</div></div></div><div class="row">${btn('storyUpd', '적용', { id: e.id, k }, 'primary small')}${btn('storyUpdSkip', '그대로 두기', { id: e.id, k }, 'quiet small')}</div>`).join('')}</div>` : ''}`
-    : ruleQs(e)}
-${per ? `<p class="note">글에서 기간처럼 보이는 표현을 찾았습니다: <b>${esc(per)}</b> ${btn('usePeriod', '기간 칸에 넣기', { id: e.id, p: per }, 'link')} <span class="meta">(규칙으로 찾은 것 — 맞는지 확인하세요)</span></p>` : ''}
-${!AI.ok && e.raw?.trim() && !e.f?.action?.trim() ? `<p class="note">AI 없이는 글을 항목으로 나눠 주지 못합니다. ${btn('rawToAction', '적은 글을 「실행 내용」에 그대로 옮기기', { id: e.id }, 'link')} — 옮긴 뒤 오른쪽에서 다듬을 수 있습니다.</p>` : ''}</section>
-<section id="s3"><h2>③ 이력서용 문장</h2>${bulletPane(e)}</section>`;
+<div class="row">${AI.ok ? btn('aiRun', UI.busy['story:' + e.id] ? '정리하는 중…' : '정리하고 질문 받기', { t: 'story', c: e.id }, 'primary', !!UI.busy['story:' + e.id] || !e.raw?.trim()) : btn('expStep', '다음: 내용 보완하기', { id: e.id, s: 2 }, 'primary', !e.raw?.trim())}</div>
+${UI.aiMsg['story:' + e.id] ? `<p class="msg ${UI.aiMsg['story:' + e.id].type}">${esc(UI.aiMsg['story:' + e.id].text)}</p>` : ''}
+${AI.ok ? '' : `<details><summary>Claude에 직접 물어보기 (요청문 복사 → 답 붙여넣기)</summary>${aiPanel('story', e.id, '글 정리 + 추가 질문', '내 글과 답변만 담깁니다. 받은 답을 붙여넣으면 AI로 정리한 것과 같게 반영됩니다.')}</details>`}`;
 }
+function step2(e) {
+  const s = e.story, aiQs = s?.source === 'AI', open = aiQs ? s.qs.filter(q => q.status === 'open') : [], done = aiQs ? s.qs.filter(q => q.status !== 'open') : [];
+  const upd = Object.entries(s?.upd || {}), per = !e.period?.trim() && e.raw?.match(PERIOD)?.[0];
+  return `${aiQs ? `<p class="hint">글에서 부족한 것만 골라 물었습니다. 모르면 "모름"이라고 적으세요.</p>
+${open.length ? open.map(q => `<div class="fb optional"><p><b>${esc(q.q)}</b></p>${ta(`story:${e.id}|${q.id}:answer`, q.answer, 2, '답변')}</div>`).join('') + (AI.ok ? `<div class="row">${btn('aiRun', UI.busy['story:' + e.id] ? '반영하는 중…' : '답변 반영하고 다음 질문', { t: 'story', c: e.id }, '', !!UI.busy['story:' + e.id])}</div>` : `<details><summary>답한 뒤 Claude에 다시 물어보기</summary>${aiPanel('story', e.id, '답변 반영 + 다음 질문', '')}</details>`) : '<p class="msg ok">더 물을 질문이 없습니다.</p>'}
+${done.length ? `<details><summary>답한 질문 ${done.length}개 (다시 묻지 않음)</summary><ul>${done.map(q => `<li>${esc(q.q)}<br><span class="meta">답: ${esc(q.answer || '—')}</span></li>`).join('')}</ul></details>` : ''}
+${upd.length ? `<div class="proposal"><h4>답변으로 바뀐 항목 — 확인 후 적용</h4>${upd.map(([k, v]) => `<div class="cmp"><div><span>지금 「${esc(LABEL[k])}」</span><div class="before">${esc(val(e, k))}</div></div><div><span>제안</span><div class="after">${esc(v)}</div></div></div><div class="row">${btn('storyUpd', '적용', { id: e.id, k }, 'small')}${btn('storyUpdSkip', '그대로 두기', { id: e.id, k }, 'quiet small')}</div>`).join('')}</div>` : ''}` : ruleQs(e)}
+${per ? `<p class="note">글에서 찾은 기간: <b>${esc(per)}</b> ${btn('usePeriod', '기간에 넣기', { id: e.id, p: per }, 'link')}</p>` : ''}
+${!AI.ok && e.raw?.trim() && !e.f?.action?.trim() ? `<p class="note">AI 없이는 글을 항목으로 나누지 못합니다. ${btn('rawToAction', '적은 글을 「실행 내용」으로 옮기기', { id: e.id }, 'link')}</p>` : ''}
+<div class="row">${btn('expStep', '다음: 이력서 문장', { id: e.id, s: 3 }, 'primary', !usable(e))}${usable(e) ? '' : '<span class="meta">「실행 내용」이나 「결과」가 채워지면 넘어갈 수 있습니다.</span>'}</div>`;
+}
+const step3 = e => bulletPane(e);
 function ruleQs(e) {
   const pend = Q_ORDER.filter(k => !val(e, k).trim() && !e.unknown?.[k] && !e.qSkip?.[k]);
   const now = pend.slice(0, 3), skipped = Object.keys(e.qSkip || {}).filter(k => e.qSkip[k] && !val(e, k).trim());
-  return `<p class="hint"><b>규칙 질문</b> — 비어 있는 항목을 이력서에 중요한 순서로 3개씩 묻습니다. 답은 오른쪽 항목에 바로 저장되고, 답한 항목은 다시 묻지 않습니다. 남은 질문 ${pend.length}개</p>
+  return `<p class="hint"><b>규칙 질문</b> — 빈 항목을 중요한 순서로 3개씩 묻습니다. 답한 항목은 다시 묻지 않습니다. (남은 ${pend.length}개)</p>
 ${now.length ? now.map(k => `<div class="fb optional"><p><b>${esc(QUESTIONS[k])}</b></p>${HEAD.some(h => h[0] === k) ? inp(bpath(e, k), val(e, k), k === 'period' ? '예: 2021.03 – 2023.08' : '') : ta(bpath(e, k), val(e, k), 2, PH[k] || '')}
-<div class="row">${btn('qUnknown', '모름 · 확인 필요로 표시', { id: e.id, k }, 'quiet small')}${btn('qSkip', '나중에', { id: e.id, k }, 'quiet small')}</div></div>`).join('') + `<div class="row">${btn('rerender', '답했어요 · 다음 질문', {}, 'primary')}</div>`
+<div class="row">${btn('qUnknown', '모름 · 확인 필요', { id: e.id, k }, 'quiet small')}${btn('qSkip', '나중에', { id: e.id, k }, 'quiet small')}</div></div>`).join('') + `<div class="row">${btn('rerender', '답했어요 · 다음 질문', {}, '')}</div>`
     : `<p class="msg ok">물어볼 빈 항목이 없습니다.</p>`}
-${skipped.length ? `<p class="hint">나중으로 미룬 질문 ${skipped.length}개 ${btn('qUnskip', '다시 보기', { id: e.id }, 'link')}</p>` : ''}`;
+${skipped.length ? `<p class="hint">미룬 질문 ${skipped.length}개 ${btn('qUnskip', '다시 보기', { id: e.id }, 'link')}</p>` : ''}`;
 }
 function bulletPane(e) {
-  if (!usable(e)) return `<p class="hint">「실행 내용」이나 「결과」가 채워지면 이력서 문장을 만들 수 있습니다. 위 질문에 답하거나 오른쪽 항목에 직접 적으세요.</p>`;
+  if (!usable(e)) return `<p class="hint">「실행 내용」이나 「결과」가 채워지면 만들 수 있습니다. ${btn('expStep', '← 내용 보완하기', { id: e.id, s: 2 }, 'link')}</p>`;
   const b = e.bullets, masterR = S.docs.find(d => isMaster(d) && d.type === 'resume'), inR = masterR?.groups.some(g => g.expId === e.id);
-  return `<p class="hint">이력서 경력 칸에 들어갈 문장입니다. ${AI.ok ? 'AI는 입력한 항목에 있는 사실만으로 문장을 다듬습니다.' : 'AI 미연결: 입력한 문장을 <b>다듬지 않고 그대로</b> 옮깁니다.'}</p>
-<div class="row">${AI.ok ? btn('aiRun', UI.busy['bullets:' + e.id] ? '만드는 중…' : 'AI로 이력서 문장 제안', { t: 'bullets', c: e.id }, 'primary', !!UI.busy['bullets:' + e.id]) : ''}${btn('bulletsRule', '입력한 문장 그대로 옮기기 (규칙)', { id: e.id }, AI.ok ? 'quiet' : 'primary')}</div>
-${AI.ok ? '' : `<details><summary>AI 없이 Claude에 직접 물어보기</summary>${aiPanel('bullets', e.id, '이력서 문장 제안', '이 경험의 항목과 답변만 담깁니다.')}</details>`}
+  const hasB = !!b?.items?.length;
+  return `<p class="hint">${AI.ok ? 'AI가 입력한 항목에 있는 사실만으로 다듬습니다.' : 'AI 미연결: 입력한 문장을 <b>다듬지 않고 그대로</b> 옮깁니다.'} 회사·직책·기간은 이 경험의 값을 그대로 씁니다.</p>
+<div class="row">${AI.ok ? btn('aiRun', UI.busy['bullets:' + e.id] ? '만드는 중…' : hasB ? '다시 제안받기' : 'AI로 이력서 문장 제안', { t: 'bullets', c: e.id }, hasB ? 'quiet' : 'primary', !!UI.busy['bullets:' + e.id]) : ''}${btn('bulletsRule', '입력한 문장 그대로 옮기기', { id: e.id }, AI.ok || hasB ? 'quiet' : 'primary')}</div>
+${AI.ok ? '' : `<details><summary>Claude에 직접 물어보기</summary>${aiPanel('bullets', e.id, '이력서 문장 제안', '이 경험의 항목과 답변만 담깁니다.')}</details>`}
 ${UI.aiMsg['bullets:' + e.id] && AI.ok ? `<p class="msg ${UI.aiMsg['bullets:' + e.id].type}">${esc(UI.aiMsg['bullets:' + e.id].text)}</p>` : ''}
-${b?.items?.length ? `<div class="proposal"><h4>문장 제안 <span class="meta">${b.source === 'AI' ? 'AI' : '규칙 — 입력 그대로'} · ${fmt(b.at)}</span></h4>
-${b.items.map(it => `<div class="bul ${it.use === false ? 'off' : ''}"><label class="chk">${`<input type="checkbox" data-b="bul:${e.id}|${it.id}:use" ${it.use !== false ? 'checked' : ''} data-rr>`} 넣기</label> <span class="chip">${it.field === 'result' ? '성과' : '주요 업무'}</span>
-${ta(`bul:${e.id}|${it.id}:text`, it.text, 1)}
-${it.basis ? `<p class="meta">근거: “${esc(it.basis)}”</p>` : ''}${it.warn ? `<p class="msg err">입력에 없는 표현(${esc(it.warn)}) — 넣으면 '확인 필요'로 표시됩니다</p>` : ''}</div>`).join('')}
-<div class="row">${btn('putBullets', inR ? '기본 이력서의 이 경험 문장 바꾸기' : '기본 이력서에 넣기', { id: e.id, t: 'resume' }, 'primary')}${btn('putBullets', '기본 경력기술서에도 넣기 (항목 그대로)', { id: e.id, t: 'career' }, 'quiet')}</div>
-${b.put ? `<p class="msg ok">기본 이력서에 넣었습니다 (${fmt(b.put)}). <a href="#/doc/${masterR?.id}">기본 이력서 열기 →</a> 공고에 맞춰 고치는 건 지원 회사 → 지원 문서에서 합니다.</p>` : ''}</div>` : ''}`;
+${hasB ? `<div class="proposal"><h4>문장 제안 <span class="meta">${b.source === 'AI' ? 'AI' : '규칙 — 입력 그대로'}</span></h4>
+${b.items.map(it => `<div class="bul ${it.use === false ? 'off' : ''}"><label class="chk"><input type="checkbox" data-b="bul:${e.id}|${it.id}:use" ${it.use !== false ? 'checked' : ''} data-rr> 넣기</label> <span class="chip">${it.field === 'result' ? '성과' : '주요 업무'}</span>
+${ta(`bul:${e.id}|${it.id}:text`, it.text, 1)}${it.basis ? `<p class="meta">근거: “${esc(it.basis)}”</p>` : ''}${it.warn ? `<p class="msg err">입력에 없는 표현(${esc(it.warn)}) — 넣으면 '확인 필요'로 표시됩니다</p>` : ''}</div>`).join('')}
+<div class="row">${btn('putBullets', inR ? '기본 이력서의 이 경험 문장 바꾸기' : '기본 이력서에 넣기', { id: e.id, t: 'resume' }, 'primary')}${btn('putBullets', '경력기술서에도 넣기', { id: e.id, t: 'career' }, 'quiet')}</div>
+${b.put ? `<p class="msg ok">기본 이력서에 넣었습니다 (${fmt(b.put)}). <a href="#/doc/${masterR?.id}">열기 →</a></p>` : ''}</div>` : ''}`;
 }
 function summaryPane(e) {
   const filled = ALL.filter(([k]) => val(e, k).trim()), unk = ALL.filter(([k]) => e.unknown?.[k]);
-  return `<h2>정리된 항목 <span class="meta">${ALL.length}개 중 ${filled.length}개</span></h2>
+  return `<h2>정리된 항목 <span class="meta">${filled.length}/${ALL.length}</span></h2>
 <p><b>${esc(e.org || '회사·활동명 ?')}</b> · ${esc(e.position || '직책 ?')} · ${esc(e.period || '기간 ?')}</p>
-${filled.filter(([k]) => !HEAD.some(h => h[0] === k)).map(([k, l]) => `<p class="sum"><span class="lbl">${l}${e.unknown?.[k] ? ' ' + badge('확인 필요', 'must') : ''}</span>${esc(val(e, k).slice(0, 90))}${val(e, k).length > 90 ? '…' : ''}</p>`).join('') || '<p class="muted">아직 정리된 내용이 없습니다.</p>'}
+${filled.filter(([k]) => !HEAD.some(h => h[0] === k)).map(([k, l]) => `<p class="sum"><span class="lbl">${l}${e.unknown?.[k] ? ' ' + badge('확인 필요', 'must') : ''}</span>${esc(val(e, k).slice(0, 90))}${val(e, k).length > 90 ? '…' : ''}</p>`).join('')}
 ${unk.length ? `<p class="meta">확인 필요: ${unk.map(([, l]) => l).join(', ')}</p>` : ''}
-<details ${UI.show['allf:' + e.id] ? 'open' : ''}><summary>전체 항목 보기·고치기</summary>${fieldsForm(e)}${draftView(e)}</details>
-<p class="meta"><a href="#/fb/${e.id}">규칙 점검·AI 피드백으로 더 보완하기 →</a> · ${confirmBtn('del-exp-' + e.id, '경험 삭제', 'delExp', { id: e.id })}</p>`;
+<details><summary>전체 항목 보기·고치기</summary>${fieldsForm(e)}${draftView(e)}</details>
+${e.raw?.trim() ? `<details><summary>처음 적은 글 (원문 그대로 보관)</summary><div class="pre quote">${esc(e.raw)}</div></details>` : ''}`;
 }
 function draftView(e) {
   const d = e.aiDraft; if (!d) return '';
@@ -891,7 +898,7 @@ V.fb = r => {
 ${DI.length ? DI.map(({ d, I }) => `<div class="card"><a href="#/doc/${d.id}"><b>${esc(d.title)}</b></a> ${isMaster(d) ? badge('공통 문서') : badge(job(d.jobId)?.company || '지원 문서')} ${badge(DOC_TYPES[d.type])}
 <ul class="issues">${I.map(({ s, c }) => `<li><a href="#/doc/${d.id}/${s.id}">${badge(LEVELS[c.level], c.level)} ${esc(c.issue)}</a><span class="meta"> — “${esc(s.text.slice(0, 50))}${s.text.length > 50 ? '…' : ''}”</span></li>`).join('')}</ul></div>`).join('') : '<p class="hint">문서 문장에서 걸린 항목이 없습니다.</p>'}
 <h2>경험 <span class="meta">${S.experiences.length}개</span></h2>
-${S.experiences.length ? `<div class="cards">${S.experiences.map(e => `<div class="card"><a href="#/fb/${e.id}"><b>${esc(expName(e))}</b></a> ${sampleB(e)}<p class="meta">${Object.keys(LEVELS).map(lv => openCount(e, lv) ? badge(LEVELS[lv] + ' ' + openCount(e, lv), lv) : '').filter(Boolean).join(' ') || (e.fbAt ? '열린 피드백 없음' : '아직 점검 안 함')}</p></div>`).join('')}</div>` : `<div class="card"><p>아직 경험이 없습니다.</p>${btn('newExp', '＋ 질문에 답하며 경험 추가', { m: 'q' }, 'primary')}</div>`}`; }
+${S.experiences.some(hasText) ? `<div class="cards">${S.experiences.filter(hasText).map(e => `<div class="card"><a href="#/fb/${e.id}"><b>${esc(expName(e))}</b></a> ${sampleB(e)}<p class="meta">${Object.keys(LEVELS).map(lv => openCount(e, lv) ? badge(LEVELS[lv] + ' ' + openCount(e, lv), lv) : '').filter(Boolean).join(' ') || (e.fbAt ? '열린 피드백 없음' : '아직 점검 안 함')}</p></div>`).join('')}</div>` : `<div class="card"><p>아직 경험이 없습니다.</p>${btn('newExp', '＋ 질문에 답하며 경험 추가', { m: 'q' }, 'primary')}</div>`}`; }
   const e = exp(r.id); if (!e) return notFound();
   if (e.fbAt) { const n = JSON.stringify(e.feedback.map(x => x.key)); refreshRules(e); if (JSON.stringify(e.feedback.map(x => x.key)) !== n) save(); }
   const open = e.feedback.filter(x => x.status === 'open'); const done = e.feedback.filter(x => x.status !== 'open');
@@ -939,7 +946,7 @@ V.job = r => {
   const j = job(r.id); if (!j) return notFound();
   const tab = JOB_TABS.some(t => t[0] === r.sub) ? r.sub : 'info';
   return `<div class="page-head"><a class="back" href="#/jobs">← 지원 회사</a><h1>${esc(j.company || '회사명 미입력')} ${sampleB(j)} <span class="meta">${esc(j.position)}</span></h1>
-<div class="row">${sel(`job:${j.id}:status`, j.status, JOB_STATUS.map(s => [s, s]), false)}<span class="meta">마감 ${esc(j.deadline || '-')} ${dday(j.deadline)} · 지원·제출은 이 사이트가 하지 않습니다</span>${confirmBtn('del-job-' + j.id, '삭제', 'delJob', { id: j.id })}</div></div>
+<div class="row">${sel(`job:${j.id}:status`, j.status, JOB_STATUS.map(s => [s, s]), false)}<span class="meta">마감 ${esc(j.deadline || '-')} ${dday(j.deadline)} · 지원·제출은 이 사이트가 하지 않습니다</span>${more('del-job-' + j.id, confirmBtn('del-job-' + j.id, '지원 회사 삭제', 'delJob', { id: j.id }))}</div></div>
 <nav class="subtabs">${JOB_TABS.map(([k, l]) => `<a href="#/job/${j.id}/${k}" class="${k === tab ? 'on' : ''}">${l}</a>`).join('')}</nav>` + JT[tab](j);
 };
 const JT = {};
@@ -1103,11 +1110,11 @@ V.doc = r => {
   const pc = UI.show['check:' + d.id] ? preCheck(d) : null, unv = d.sentences.filter(s => s.unverified).length;
   const nIssue = docIssues(d).filter(x => x.c.level !== 'optional').length;
   const head = `<div class="doc-head"><a class="back" href="${master ? '#/docs' : `#/job/${d.jobId}/docs`}">← ${master ? '이력서 · 경력기술서' : esc(j?.company || '지원 회사')}</a>
-<div class="ctx">${master ? `${badge('공통 문서', 'ctxb')} <span>어느 공고에도 연결되지 않은 기본 문서</span>` : `${badge('지원 문서', 'ctxb on')} <b>${esc(j?.company || '(삭제된 공고)')}</b>${j?.position ? ` · ${esc(j.position)}` : ''}`} · <b>${DOC_TYPES[d.type]}</b></div>
-${UI.show['title:' + d.id] ? `<div class="row">${inp(`doc:${d.id}:title`, d.title)}${btn('toggle', '완료', { k: 'title:' + d.id }, 'quiet')}</div>` : `<h1>${esc(d.title)} ${btn('toggle', '이름 바꾸기', { k: 'title:' + d.id }, 'link small')}</h1>`}
-<p class="meta">${master ? `공고에 지원할 때는 이 문서를 복사해 고칩니다(복사본 ${S.docs.filter(x => x.basedOn === d.id).length}개)` : `${d.basedOn ? `복사한 기본 문서: ${base ? `<a href="#/doc/${base.id}">${esc(base.title)}</a>` : '(삭제됨)'} · ` : ''}여기서 고친 내용은 이 회사 문서에만 남습니다`} · 수정 ${fmt(d.updatedAt)}</p>
-<div class="row toolbar no-print">${btn('toggleCheck', pc ? '점검 닫기' : '제출 전 점검', { id: d.id }, 'primary')}<a class="btn" href="#/print/${d.id}">인쇄 · PDF</a>${btn('copyDoc', '텍스트 복사', { id: d.id })}${btn('saveVer', '버전 저장', { id: d.id }, 'quiet')}
-<details class="more" ${UI.confirm === 'del-doc-' + d.id ? 'open' : ''}><summary class="btn quiet" aria-label="문서 메뉴 더보기">⋯</summary><div class="menu">${btn('mdDoc', 'Markdown 다운로드', { id: d.id }, 'link')}${confirmBtn('del-doc-' + d.id, '문서 삭제', 'delDoc', { id: d.id })}</div></details></div></div>`;
+<div class="ctx ${master ? '' : 'job'}">${master ? `${badge('공통 문서', 'ctxb')} <b>${DOC_TYPES[d.type]}</b> <span class="meta">어느 회사에도 연결되지 않은 기본 문서 · 수정 ${fmt(d.updatedAt)}</span>`
+    : `${badge('회사별 문서', 'ctxb on')} <b>${esc(j?.company || '(삭제된 공고)')}</b>${j?.position ? ` · ${esc(j.position)}` : ''} · <b>${DOC_TYPES[d.type]}</b> <span class="meta">수정 ${fmt(d.updatedAt)}</span>`}</div>
+${UI.show['title:' + d.id] ? `<div class="row">${inp(`doc:${d.id}:title`, d.title)}${btn('toggle', '완료', { k: 'title:' + d.id }, 'quiet')}</div>` : `<div class="title-row"><h1>${esc(d.title)}</h1>${more('del-doc-' + d.id, `${btn('toggle', '이름 바꾸기', { k: 'title:' + d.id }, 'link')}${btn('mdDoc', 'Markdown 다운로드', { id: d.id }, 'link')}${confirmBtn('del-doc-' + d.id, '문서 삭제', 'delDoc', { id: d.id })}`)}</div>`}
+${master ? '' : `<p class="meta">${d.basedOn ? `복사한 공통 문서: ${base ? `<a href="#/doc/${base.id}">${esc(base.title)}</a>` : '(삭제됨)'} · ` : ''}여기서 고친 내용은 이 회사 문서에만 남고, 공통 문서와 경험 원본은 바뀌지 않습니다.</p>`}
+<div class="row toolbar no-print">${docEmpty(d) ? `<span class="meta">내용을 채우면 제출 전 점검과 내보내기를 쓸 수 있습니다.</span>` : `${btn('toggleCheck', pc ? '점검 닫기' : '제출 전 점검', { id: d.id }, 'primary')}<a class="btn quiet" href="#/print/${d.id}">인쇄 · PDF</a>${btn('copyDoc', '텍스트 복사', { id: d.id }, 'quiet')}${btn('saveVer', '버전 저장', { id: d.id }, 'quiet')}`}</div></div>`;
   const notices = `${base && base.updatedAt > d.baseAt ? `<div class="note warn no-print">기본 문서가 이 문서를 만든 뒤 수정됐습니다. 필요한 부분만 옮기거나 새로 복사하세요. ${btn('ackBase', '확인함', { id: d.id }, 'quiet')} <a href="#/doc/${base.id}">기본 문서 보기</a></div>` : ''}
 ${stale.map(id => { const e = exp(id); const old = d.src[id]; const diff = e ? ALL.filter(([k]) => val(old, k) !== val(e, k)) : [];
   return `<div class="note warn no-print"><b>원본 경험이 바뀌었습니다: ${esc(e ? expName(e) : old.org || '삭제된 경험')}</b>${e ? '' : ' — 원본이 삭제됐습니다.'}
@@ -1135,7 +1142,12 @@ ${E.length ? `<p>초안에 쓸 수 있는 경험 ${E.length}개가 있습니다$
 function draftPicker(d) {
   const p = UI.dpick, j = job(d.jobId), E = realExps(j).filter(hasText);
   return `<div class="empty no-print"><h2>초안에 넣을 경험 고르기</h2><p class="hint">${j ? '[경험 연결]에서 이 공고와 연결한 경험이 먼저 선택돼 있고, 연결이 많은 순서로 배치됩니다. ' : ''}경험의 '확인 필요' 항목에서 나온 문장은 미확인으로 들어가 제출본에서 빠집니다.</p>
-${E.map(e => { const inDoc = d.groups.some(g => g.expId === e.id), ok = usable(e); return `<label class="chk pick"><input type="checkbox" data-a2="dpickExp" data-e="${e.id}" ${p.sel.includes(e.id) ? 'checked' : ''} ${inDoc || !ok ? 'disabled' : ''}> <b>${esc(expName(e))}</b> <span class="meta">${esc(e.period || '기간 미입력')}${inDoc ? ' · 이미 문서에 있음' : ''}${linkScore(j, e.id) ? ' · 이 공고와 연결됨' : ''}</span>${ok ? '' : ` <a href="#/exp/${e.id}#s2">실행 내용·결과가 비어 있어 쓸 수 없음 — 채우기</a>`}</label>`; }).join('') || '<p class="muted">쓸 수 있는 경험이 없습니다.</p>'}
+<table class="t pick-t"><thead><tr><th></th><th>회사·활동명 / 경험</th><th>핵심 실행 내용</th><th>상태</th></tr></thead><tbody>
+${E.map(e => { const inDoc = d.groups.some(g => g.expId === e.id), ok = usable(e); return `<tr class="${inDoc || !ok ? 'dim' : ''}"><td><input type="checkbox" aria-label="${esc(expTitle(e))} 넣기" data-a2="dpickExp" data-e="${e.id}" ${p.sel.includes(e.id) ? 'checked' : ''} ${inDoc || !ok ? 'disabled' : ''}></td>
+<td><b>${esc(e.org || '회사명 미입력')}</b>${sampleB(e)}<br><span class="meta">${esc([e.position, e.period].filter(Boolean).join(' · ') || (e.raw?.trim().slice(0, 30) || ''))}</span></td>
+<td class="meta">${esc(lines(e.f?.action)[0]?.slice(0, 60) || '—')}</td>
+<td>${inDoc ? badge('이미 이 문서에 있음', 'ok') : ok ? badge(...expState(e)) : `<a href="#/exp/${e.id}">실행 내용·결과 채우기</a>`}${linkScore(j, e.id) ? '<br><span class="meta">이 공고와 연결됨</span>' : ''}</td></tr>`; }).join('') || '<tr><td colspan="4" class="muted">쓸 수 있는 경험이 없습니다.</td></tr>'}</tbody></table>
+${E.some(e => d.groups.some(g => g.expId === e.id)) ? '<p class="hint">이미 이 문서에 있는 경험은 다시 넣을 수 없습니다. 원본 경험을 고치면 문서에 "원본이 바뀌었습니다" 알림이 떠서 골라 반영할 수 있습니다.</p>' : ''}
 <div class="row">${btn('draftGen', `초안 만들기${p.sel.length ? ` (${p.sel.length}개)` : ''}`, { id: d.id }, 'primary', !p.sel.length)}${btn('draftCancel', '취소', {}, 'quiet')}${btn('newExp', '＋ 경험 이야기하기', {}, 'link')}</div></div>`;
 }
 function secView(d, g, i) {
@@ -1148,9 +1160,9 @@ function secView(d, g, i) {
   const links = e ? reqs(j).filter(r => j.mapping[r.id]?.expIds?.includes(g.expId)) : [];
   return `<section class="sec">
 <div class="sec-h"><h3>${esc(title)}</h3>${g.unverified ? `<span class="flag must" title="${esc('원본 경험의 회사명·직책·기간 중 비었거나 확인 필요로 표시된 값이 있습니다.')}">회사·직책·기간 확인 필요</span>` : ''}
-<span class="sec-tools no-print">${btn('toggle', editing ? '완료' : '제목 편집', { k: 't:' + g.key }, 'link small')}
-<details class="more" ${UI.confirm === 'del-grp-' + g.key ? 'open' : ''}><summary aria-label="섹션 메뉴">⋯</summary><div class="menu">${btn('grpMove', '위로 이동', { id: d.id, g: g.key, dir: -1 }, 'link', i === 0)}${btn('grpMove', '아래로 이동', { id: d.id, g: g.key, dir: 1 }, 'link', i === d.groups.length - 1)}${e ? `<a href="#/exp/${e.id}">원본 경험 열기</a>` : ''}${confirmBtn('del-grp-' + g.key, '섹션 삭제', 'delGrp', { id: d.id, g: g.key })}</div></details></span></div>
-${editing ? (g.career && !g.expId ? careerView(d, g) : `<div class="fld">${inp(`grp:${d.id}|${g.key}:title`, g.title, '섹션 제목')}${g.expId ? chk(`grp:${d.id}|${g.key}:unverified`, g.unverified, '회사·직책·기간 확인 필요', true) : ''}</div>`) : ''}
+<span class="sec-tools no-print">${editing ? btn('toggle', '완료', { k: 't:' + g.key }, 'link small') : ''}${e ? `<a class="small" href="#/exp/${e.id}">원본 경험</a>` : ''}
+${more('del-grp-' + g.key, `${e ? `<a href="#/exp/${e.id}">회사·직책·기간은 원본 경험에서 고치기</a>` : btn('toggle', g.career ? '회사·기간 편집' : '제목 편집', { k: 't:' + g.key }, 'link')}${btn('grpMove', '위로 이동', { id: d.id, g: g.key, dir: -1 }, 'link', i === 0)}${btn('grpMove', '아래로 이동', { id: d.id, g: g.key, dir: 1 }, 'link', i === d.groups.length - 1)}${confirmBtn('del-grp-' + g.key, '섹션 삭제', 'delGrp', { id: d.id, g: g.key })}`)}</span></div>
+${editing && !e ? (g.career ? careerView(d, g) : `<div class="fld">${inp(`grp:${d.id}|${g.key}:title`, g.title, '섹션 제목')}${g.expId ? chk(`grp:${d.id}|${g.key}:unverified`, g.unverified, '회사·직책·기간 확인 필요', true) : ''}</div>`) : ''}
 ${links.length ? `<p class="meta no-print">이 공고와 연결: ${links.map(r => esc(r.text)).join(' · ')}</p>` : ''}
 ${light ? `<p class="hint no-print">${g.key === 'summary' ? '경력 문장을 채운 뒤 한두 줄로 쓰면 됩니다.' : '경력 문장에서 확인된 역량만 적으면 됩니다.'} ${btn('toggle', '지금 쓰기', { k: 'w:' + d.id + g.key }, 'link')}</p>`
     : ss.map((s, k) => sentView(d, g, s, k, ss.length, ss[k - 1]?.label)).join('') || `<p class="hint">문장이 없습니다.${e ? ` 이 경험의 주요 업무·성과가 비어 있습니다 — <a href="#/exp/${e.id}/q">질문에 답해 채우기</a>` : ''}</p>`}
@@ -1163,7 +1175,7 @@ function sentView(d, g, s, k, n, prevLabel) {
   return `<div class="sent ${sel ? 'sel' : ''} ${s.unverified ? 'unv' : ''}" data-doc="${d.id}" data-sid="${s.id}">
 ${s.label && s.label !== prevLabel ? `<span class="slabel">${esc(s.label)}</span>` : ''}${ta(`${ref}:text`, s.text, 1, ph)}
 ${s.unverified ? `<p class="flag-line"><span class="flag must">확인 필요</span> ${esc(verifyWhat(s))}</p>` : top ? `<p class="flag-line"><span class="flag ${top.level}">${esc(LEVELS[top.level])}</span> ${esc(top.issue)}${cs.length > 1 ? ` 외 ${cs.length - 1}개` : ''}</p>` : ''}${s.prop ? `<p class="flag-line"><span class="flag ok">수정안 있음</span> 오른쪽에서 비교 후 적용</p>` : ''}
-<div class="stools no-print"><label>인쇄 소제목 ${sel_(`${ref}:label`, s.label, LABELS[d.type].map(l => [l, l || '없음']))}</label>${chk(`${ref}:unverified`, s.unverified, '확인 필요로 표시', true)}${btn('sentMove', '↑', { id: d.id, s: s.id, dir: -1 }, 'link', k === 0)}${btn('sentMove', '↓', { id: d.id, s: s.id, dir: 1 }, 'link', k === n - 1)}${btn('delSent', '삭제', { id: d.id, s: s.id }, 'link')}${btn('tab', `피드백 보기${cs.length ? ' ' + cs.length : ''}`, { k: 'doc', i: 1 }, 'quiet only-m')}</div></div>`;
+<div class="stools no-print"><label>인쇄 소제목 ${sel_(`${ref}:label`, s.label, LABELS[d.type].map(l => [l, l || '없음']))}</label>${chk(`${ref}:unverified`, s.unverified, '확인 필요로 표시', true)}${btn('sentMove', '↑', { id: d.id, s: s.id, dir: -1 }, 'link', k === 0)}${btn('sentMove', '↓', { id: d.id, s: s.id, dir: 1 }, 'link', k === n - 1)}${btn('delSent', '삭제', { id: d.id, s: s.id }, 'link')}${s.expIds.map(exp).filter(Boolean).map(x => `<a href="#/exp/${x.id}">원본: ${esc(expTitle(x))}</a>`).join('')}${btn('tab', `피드백 보기${cs.length ? ' ' + cs.length : ''}`, { k: 'doc', i: 1 }, 'quiet only-m')}</div></div>`;
 }
 const sel_ = (b, v, opts) => sel(b, v, opts, false);
 function fbPanel(d) {
@@ -1176,6 +1188,7 @@ function sentPanel(d, s) {
   return `<div class="panel-h"><b>선택한 문장</b> ${btn('selSent', '← 문서 전체 보기', { id: d.id, s: '' }, 'link small')}</div>
 <p class="quote">${s.text.trim() ? esc(s.text) : '<span class="muted">(비어 있음 — 왼쪽에서 쓰세요)</span>'}</p>
 <p class="meta">${esc(gTitle(g) || '')}${E.length ? ` · 근거 경험: ${E.map(e => `<a href="#/exp/${e.id}">${esc(expName(e))}</a>`).join(', ')}` : ' · 연결된 경험 없음'}${isMaster(d) ? '' : ' · 고치면 이 회사 문서에만 반영'}</p>
+${E.length ? `<details><summary>연결된 경험 원본 보기</summary>${E.map(x => `<p><b>${esc(expName(x))}</b> <span class="meta">${esc(x.period || '')}</span></p>${['action', 'result'].filter(k => x.f?.[k]).map(k => `<p class="sum"><span class="lbl">${LABEL[k]}</span>${esc(x.f[k])}</p>`).join('')}<p><a href="#/exp/${x.id}">원본 경험 열기 →</a> <span class="meta">여기서 문장을 고쳐도 원본은 바뀌지 않습니다</span></p>`).join('')}</details>` : ''}
 ${s.undo ? `<div class="msg ok">방금 수정안을 적용했습니다. ${btn('sentUndo', '되돌리기', { id: d.id, s: s.id }, 'link')}</div>` : ''}
 ${s.prop ? `<div class="proposal"><h4>수정안 <span class="meta">${s.prop.source === 'AI' ? 'AI' : '규칙 초안'}</span></h4>
 <div class="cmp"><div><span>지금 문장</span><div class="before">${esc(s.prop.before) || '(비어 있음)'}</div></div><div><span>수정안 — 직접 고쳐도 됩니다</span>${ta(`${ref}:prop.after`, s.prop.after, 3)}</div></div>
@@ -1212,7 +1225,7 @@ ${d.revision ? revView(d, d.revision) : ''}`}`;
 }
 function careerView(d, g) {
   const r = k => `grp:${d.id}|${g.key}:${k}`, t = tenure(g);
-  return `<div class="grid2"><div class="fld"><span>회사</span>${inp(r('company'), g.company || '', '예: 룰루레몬애틀라티카코리아', 'text', true)}</div><div class="fld"><span>직책 · 담당</span>${inp(r('role'), g.role || '', '예: Key Leader', 'text', true)}</div></div>
+  return `<div class="grid2"><div class="fld"><span>회사</span>${inp(r('company'), g.company || '', '가상 예시: ○○카페', 'text', true)}</div><div class="fld"><span>직책 · 담당</span>${inp(r('role'), g.role || '', '가상 예시: 매장 매니저', 'text', true)}</div></div>
 <div class="grid2"><div class="fld"><span>입사 (년.월)</span>${inp(r('start'), g.start || '', '예: 2022.07', 'text', true)}</div><div class="fld"><span>퇴사 (년.월)</span>${g.current ? '<input value="재직중" disabled>' : inp(r('end'), g.end || '', '예: 2025.11', 'text', true)}${chk(r('current'), g.current, '재직중', true)}</div></div>
 <p class="meta">근속기간 <b>${t || (g.start && (g.end || g.current) ? '기간을 확인하세요' : '-')}</b>${t ? ' — 입사월부터 퇴사월까지 자동 계산' : ''}</p>`;
 }
@@ -1284,7 +1297,8 @@ const A = {
   rerender() { },
   ask({ k }) { UI.confirm = k || null; },
   tab({ k, i }) { (UI.tabY[k] ??= [])[UI.tabs[k] || 0] = scrollY; UI.tabs[k] = +i; document.querySelectorAll(`[data-split="${k}"] > .pane`).forEach((p, n) => p.classList.toggle('on', n === +i)); document.querySelectorAll(`.tabs-m [data-a="tab"][data-k="${k}"]`).forEach((b, n) => b.classList.toggle('on', n === +i)); scrollTo(0, UI.tabY[k]?.[+i] || 0); return 'noRender'; },
-  newExp() { const e = newExpObj(); S.experiences.unshift(e); save(); go(`#/exp/${e.id}`); setTimeout(() => document.querySelector(`[data-b="exp:${e.id}:raw"]`)?.focus(), 50); return 'noRender'; },
+  expStep({ id, s: n }) { const e = exp(id); e.step = +n; save(); UI.stepJump = true; },
+  newExp() { const e = newExpObj(); e.step = 1; S.experiences.unshift(e); save(); go(`#/exp/${e.id}`); setTimeout(() => document.querySelector(`[data-b="exp:${e.id}:raw"]`)?.focus(), 50); return 'noRender'; },
   storyUpd({ id, k }) { const e = exp(id); pushHistory(e, 'AI 수정 제안 적용 전'); setPath(e, HEAD.some(h => h[0] === k) ? k : 'f.' + k, e.story.upd[k]); if (unsupported(e.story.upd[k], [e.raw, ...e.story.qs.map(q => q.answer), val(e, k)].join('\n')).length) e.unknown[k] = true; delete e.story.upd[k]; e.updatedAt = nowIso(); save(); },
   storyUpdSkip({ id, k }) { delete exp(id).story.upd[k]; save(); },
   usePeriod({ id, p }) { const e = exp(id); e.period = p.replace(/\s*\([^)]*\)\s*$/, '').trim(); e.updatedAt = nowIso(); save(); },
@@ -1380,7 +1394,7 @@ const A = {
   selSent({ id, s }) { UI.sel[id] = s || null; UI.jump = s || null; },
   draftPick({ id }) { const d = doc(id), j = job(d.jobId), E = realExps(j).filter(e => usable(e) && !d.groups.some(g => g.expId === e.id)); UI.dpick = { docId: id, sel: (j ? E.filter(e => linkScore(j, e.id) > 0) : E).map(e => e.id) }; },
   draftCancel() { UI.dpick = null; },
-  draftGen({ id }) { const d = doc(id); if (!docEmpty(d)) saveVersion(d, `경험 추가 전 자동 보관 (${fmt(nowIso())})`); const n = addExpGroups(d, UI.dpick.sel); UI.dpick = null; UI.sel[id] = null; d.updatedAt = nowIso(); save(); toast(`경험 ${n}개로 초안을 만들었습니다. 오른쪽에서 보완할 문장을 확인하세요.`); },
+  draftGen({ id }) { const d = doc(id); const dup = UI.dpick.sel.filter(eid => d.groups.some(g => g.expId === eid)); if (dup.length) toast(`이미 문서에 있는 경험 ${dup.length}개는 건너뜁니다.`); if (!docEmpty(d)) saveVersion(d, `경험 추가 전 자동 보관 (${fmt(nowIso())})`); const n = addExpGroups(d, UI.dpick.sel); UI.dpick = null; UI.sel[id] = null; d.updatedAt = nowIso(); save(); toast(`경험 ${n}개로 초안을 만들었습니다. 오른쪽에서 보완할 문장을 확인하세요.`); },
   sentPropose({ id, s, k }) {
     const d = doc(id), x = d.sentences.find(y => y.id === s), ans = x.qa?.[k]?.trim();
     if (!ans) return toast('추가 질문에 먼저 답해주세요.');
@@ -1645,6 +1659,7 @@ function render(top = false) {
   scrollTo(0, top ? 0 : y);
   if (r.name === 'exp' && !r.id) filterExp();
   const anchor = location.hash.split('#')[2]; if (anchor && top) document.getElementById(anchor)?.scrollIntoView({ block: 'start' });
+  if (UI.stepJump) { UI.stepJump = false; document.querySelector('.step.on')?.scrollIntoView({ block: 'start' }); }
   if (UI.jump) { document.querySelector(`.sent[data-sid="${UI.jump}"]`)?.scrollIntoView({ block: 'center' }); UI.jump = null; }
 }
 function takeJump() { const r = route(); if (r.name === 'doc' && r.sub) { UI.sel[r.id] = r.sub; UI.jump = r.sub; history.replaceState(null, '', '#/doc/' + r.id); } }
